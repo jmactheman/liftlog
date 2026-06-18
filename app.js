@@ -554,15 +554,69 @@ function kpBackspace() {
 }
 function kpNext() {
   if (!activeCell) return;
+  var field = activeCell.getAttribute('data-field');
+  var setId = activeCell.getAttribute('data-set');
   var cells = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll .cell'));
   var i = cells.indexOf(activeCell);
+  if (field === 'reps') {
+    // Next on reps = check the set (fills blanks + marks done) and start its
+    // rest timer, then jump to the next set's weight. No tapping the green check.
+    var s = setDoneStartRest(setId);
+    renderSession();
+    if (s && s.restSec) startRest(s);
+    var nc = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll .cell'));
+    if (i + 1 < nc.length) openKeypad(nc[i + 1]); else closeKeypad();
+    return;
+  }
   if (i >= 0 && i < cells.length - 1) openKeypad(cells[i + 1]);
   else closeKeypad();
 }
 
+// Mark a set done (idempotent), filling blanks from the Previous hint. Returns
+// the set so the caller can start its rest timer.
+function setDoneStartRest(setId) {
+  var s = setLocal(setId); if (!s) return null;
+  if (!s.done) {
+    s.done = true;
+    var prev = previousPerf(s.exerciseId, active.location);
+    var idx = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; }).indexOf(s);
+    var p = prev[idx] || prev[prev.length - 1];
+    if (s.weight == null && p) s.weight = p.weight;
+    if (s.reps == null && p) s.reps = p.reps;
+    dbPut('sets', s);
+  }
+  return s;
+}
+
 // ── Session: rest timer ──────────────────────────────────────────────────────────
+// Web Audio bell — generated, no asset. Unlocked on a user gesture (startRest is
+// always triggered by a tap) so it can still fire when the timer hits 0 later.
+var audioCtx = null;
+function ensureAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {}
+}
+function playChime() {
+  try {
+    ensureAudio(); if (!audioCtx) return;
+    var now = audioCtx.currentTime;
+    [[0, 880], [0.2, 1175], [0.4, 1568]].forEach(function(pair) {
+      var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = pair[1];
+      o.connect(g); g.connect(audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, now + pair[0]);
+      g.gain.exponentialRampToValueAtTime(0.35, now + pair[0] + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + pair[0] + 0.32);
+      o.start(now + pair[0]); o.stop(now + pair[0] + 0.36);
+    });
+  } catch (e) {}
+}
+
 function startRest(s) {
   stopRest(true);
+  ensureAudio();   // unlock audio on this tap so the bell can ring at 0
   sessRest = { setId: s.id, exerciseId: s.exerciseId, total: s.restSec, remaining: s.restSec, paused: false, interval: null };
   sessRest.interval = setInterval(restTick, 1000);
   updateRestUI();
@@ -571,7 +625,9 @@ function restTick() {
   if (!sessRest || sessRest.paused) return;
   sessRest.remaining -= 1;
   if (sessRest.remaining <= 0) {
-    if (navigator.vibrate) { try { navigator.vibrate([200, 80, 200]); } catch (e) {} }
+    playChime();
+    if (navigator.vibrate) { try { navigator.vibrate([300, 120, 300, 120, 300]); } catch (e) {} }
+    toast('⏱ Rest over — next set');
     stopRest();
     return;
   }
@@ -596,7 +652,7 @@ function updateRestUI() {
   if (slot) {
     // start full, drain to empty as the rest counts down
     var pct = Math.min(100, Math.max(0, (sessRest.remaining / sessRest.total) * 100));
-    slot.innerHTML = '<div class="rest-bar"><div class="fill" style="width:' + pct + '%"></div><div class="lbl">' + fmtClock(sessRest.remaining) + '</div></div>';
+    slot.innerHTML = '<div class="rest-bar" onclick="openRestControl()"><div class="fill" style="width:' + pct + '%"></div><div class="lbl">' + fmtClock(sessRest.remaining) + '</div></div>';
   }
   if ($('rest-control-sheet').classList.contains('active')) renderRestControl();
 }
@@ -609,13 +665,16 @@ function renderRestControl() {
   $('rest-control-body').innerHTML =
     '<div class="sheet-grab"></div><div class="rest-control">' +
       '<div class="rest-dial"><div class="rd-time">' + fmtClock(sessRest.remaining) + '</div><div class="rd-lbl">' + (sessRest.paused ? 'Paused' : 'Rest') + '</div></div>' +
-      '<div class="rc-btns"><button class="adj" onclick="adjustRest(-15)">−15</button>' +
+      '<div class="rc-btns"><button class="adj" onclick="adjustRest(-10)">−10</button>' +
         '<button class="btn" style="flex:0 0 auto;width:auto;padding:0 26px;" onclick="togglePauseRest()">' + (sessRest.paused ? 'Resume' : 'Pause') + '</button>' +
-        '<button class="adj" onclick="adjustRest(15)">+15</button></div>' +
-      '<div class="rc-btns" style="margin-top:12px;"><button class="btn btn-dark" onclick="stopRest();closeModal(\'rest-control-sheet\')">Skip</button></div>' +
+        '<button class="adj" onclick="adjustRest(10)">+10</button></div>' +
+      '<div class="rc-btns" style="margin-top:12px;">' +
+        '<button class="btn btn-dark" onclick="resetRest()">Reset</button>' +
+        '<button class="btn btn-dark" onclick="stopRest();closeModal(\'rest-control-sheet\')">Skip</button></div>' +
     '</div>';
 }
 function adjustRest(d) { if (!sessRest) return; sessRest.remaining = Math.max(1, sessRest.remaining + d); sessRest.total = Math.max(sessRest.total, sessRest.remaining); updateRestUI(); }
+function resetRest() { if (!sessRest) return; sessRest.remaining = sessRest.total; sessRest.paused = false; updateRestUI(); }
 function togglePauseRest() { if (!sessRest) return; sessRest.paused = !sessRest.paused; updateRestUI(); }
 
 // ── Session: cancel / finish ──────────────────────────────────────────────────
