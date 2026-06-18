@@ -23,6 +23,7 @@
   --nav-h:     58px;
   --maxw:      640px;
   --safe-b:    env(safe-area-inset-bottom, 0px);
+  --safe-t:    env(safe-area-inset-top, 0px);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -45,7 +46,7 @@ input, select, textarea { font-family: inherit; }
 .tab-view.active { display: block; }
 .page-head {
   display: flex; align-items: flex-end; justify-content: space-between;
-  padding: 14px 0 10px; position: sticky; top: 0; background: var(--bg);
+  padding: calc(14px + var(--safe-t)) 0 10px; position: sticky; top: 0; background: var(--bg);
   z-index: 5;
 }
 .page-head h1 { font-size: 30px; font-weight: 800; margin: 0; letter-spacing: -0.5px; }
@@ -146,7 +147,7 @@ select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg x
   flex-direction: column; max-width: var(--maxw); margin: 0 auto; }
 #session-overlay.active { display: flex; }
 .sess-top { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 14px 16px 10px; }
+  padding: calc(14px + var(--safe-t)) 16px 10px; }
 .sess-top .timer-chip { display: flex; align-items: center; gap: 7px; background: var(--card-2);
   border-radius: 999px; padding: 8px 12px; color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; border: 0; }
 .sess-top .timer-chip svg { width: 17px; height: 17px; stroke: var(--accent); fill: none; stroke-width: 2; }
@@ -180,6 +181,7 @@ select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg x
   padding: 10px 6px; text-align: center; font-size: 16px; font-weight: 700; color: var(--text); width: 100%; }
 .set-row.done input.cell { background: transparent; color: var(--text); }
 .set-row input.cell:focus { border-color: var(--accent); background: var(--card-2); }
+.set-row input.cell.kp-active { border-color: var(--accent); background: var(--card-2); }
 .chk { width: 38px; height: 34px; border-radius: 9px; background: var(--card-2); border: 0; color: var(--text-mut);
   display: flex; align-items: center; justify-content: center; }
 .chk svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 3; }
@@ -272,6 +274,21 @@ select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg x
 .rest-control .rc-btns .btn { flex: 1; }
 .adj { width: 56px; height: 56px; border-radius: 50%; background: var(--card-2); border: 0; color: var(--text);
   font-size: 26px; font-weight: 700; }
+
+/* ── Custom numeric keypad (session) ─────────────────────────────────────── */
+.keypad { position: fixed; left: 0; right: 0; bottom: 0; z-index: 86; display: none;
+  max-width: var(--maxw); margin: 0 auto; background: var(--bg-2);
+  border-top: 1px solid var(--border); padding: 8px 8px calc(8px + var(--safe-b)); }
+.keypad.show { display: block; }
+.kp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kp-grid button { background: var(--card-2); border: 0; color: var(--text); font-size: 24px;
+  font-weight: 700; padding: 15px 0; border-radius: 11px; font-variant-numeric: tabular-nums; }
+.kp-grid button:active { background: var(--card-3); }
+.kp-actions { display: flex; gap: 8px; margin-top: 8px; }
+.kp-actions button { flex: 1; border: 0; border-radius: 11px; padding: 16px; font-weight: 800; font-size: 16px; }
+.kp-actions .kp-done { background: var(--card-2); color: var(--text); flex: 0 0 38%; }
+.kp-actions .kp-next { background: var(--accent); color: #fff; }
+.kp-actions .kp-next:active { background: var(--accent-2); }
 
 /* ── Account / profile ───────────────────────────────────────────────────── */
 .account-strip { display: none; align-items: center; gap: 10px; justify-content: space-between;

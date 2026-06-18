@@ -7,10 +7,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>LiftLog</title>
-<link rel="manifest" href="manifest.json?v=3">
-<link rel="icon" href="icon.svg?v=3">
-<link rel="apple-touch-icon" href="icon.svg?v=3">
-<link rel="stylesheet" href="styles.css?v=3">
+<link rel="manifest" href="manifest.json?v=4">
+<link rel="icon" href="icon.svg?v=4">
+<link rel="apple-touch-icon" href="icon.svg?v=4">
+<link rel="stylesheet" href="styles.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -106,6 +106,26 @@
     <button class="btn-green btn-small" style="width:auto;" onclick="confirmFinish()">Finish</button>
   </div>
   <div class="sess-scroll" id="sess-scroll"></div>
+  <div class="keypad" id="keypad">
+    <div class="kp-grid">
+      <button type="button" onclick="kpPress('1')">1</button>
+      <button type="button" onclick="kpPress('2')">2</button>
+      <button type="button" onclick="kpPress('3')">3</button>
+      <button type="button" onclick="kpPress('4')">4</button>
+      <button type="button" onclick="kpPress('5')">5</button>
+      <button type="button" onclick="kpPress('6')">6</button>
+      <button type="button" onclick="kpPress('7')">7</button>
+      <button type="button" onclick="kpPress('8')">8</button>
+      <button type="button" onclick="kpPress('9')">9</button>
+      <button type="button" onclick="kpPress('.')">.</button>
+      <button type="button" onclick="kpPress('0')">0</button>
+      <button type="button" onclick="kpBackspace()">⌫</button>
+    </div>
+    <div class="kp-actions">
+      <button type="button" class="kp-done" onclick="closeKeypad()">Done</button>
+      <button type="button" class="kp-next" onclick="kpNext()">Next</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── Modals / sheets (populated by app.js) ──────────────────────────── -->
@@ -124,9 +144,9 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="db.js?v=3"></script>
-<script src="app.js?v=3"></script>
-<script src="sync.js?v=3"></script>
-<script src="auth.js?v=3"></script>
+<script src="db.js?v=4"></script>
+<script src="app.js?v=4"></script>
+<script src="sync.js?v=4"></script>
+<script src="auth.js?v=4"></script>
 </body>
 </html>

@@ -348,7 +348,7 @@ function openSession() {
   $('session-overlay').classList.add('active');
   startSessClock();
 }
-function closeSessionOverlay() { $('session-overlay').classList.remove('active'); stopSessClock(); renderAll(); }
+function closeSessionOverlay() { closeKeypad(); $('session-overlay').classList.remove('active'); stopSessClock(); renderAll(); }
 
 // live elapsed clock in the title meta
 var _clockInt = null;
@@ -398,8 +398,8 @@ function renderSession() {
       html += '<div class="set-row ' + (s.done ? 'done' : '') + '" data-set="' + s.id + '">' +
         '<div class="c-num"><span class="set-badge" onclick="askDeleteSet(\'' + s.id + '\')">' + (i + 1) + '</span></div>' +
         '<div class="c-prev ' + (p ? 'use' : '') + '">' + pTxt + '</div>' +
-        '<input class="cell" inputmode="decimal" placeholder="' + (p ? fmtW(p.weight) : '0') + '" value="' + (s.weight != null ? fmtW(s.weight) : '') + '" onchange="setField(\'' + s.id + '\',\'weight\',this.value)">' +
-        '<input class="cell" inputmode="numeric" placeholder="' + (p ? p.reps : '0') + '" value="' + (s.reps != null ? s.reps : '') + '" onchange="setField(\'' + s.id + '\',\'reps\',this.value)">' +
+        '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="weight" placeholder="' + (p ? fmtW(p.weight) : '0') + '" value="' + (s.weight != null ? fmtW(s.weight) : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'weight\',this.value)">' +
+        '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="reps" placeholder="' + (p ? p.reps : '0') + '" value="' + (s.reps != null ? s.reps : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'reps\',this.value)">' +
         '<button class="chk ' + (s.done ? 'on' : '') + '" onclick="toggleDone(\'' + s.id + '\')"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>' +
         '</div>' +
         '<div class="rest-slot" id="restslot-' + s.id + '"></div>';
@@ -515,6 +515,51 @@ function removeExerciseFromSession(exId) {
   }, true);
 }
 
+// ── Session: custom numeric keypad ────────────────────────────────────────────
+// inputmode="none" suppresses the OS keyboard; we drive values from our own pad
+// so a single "Next" button walks weight → reps → next set, like Strong.
+var activeCell = null;
+function openKeypad(input) {
+  activeCell = input;
+  document.querySelectorAll('.cell.kp-active').forEach(function(c) { c.classList.remove('kp-active'); });
+  input.classList.add('kp-active');
+  var kp = $('keypad'); if (kp) kp.classList.add('show');
+  var sc = $('sess-scroll'); if (sc) sc.style.paddingBottom = '320px';
+  setTimeout(function() { try { input.scrollIntoView({ block: 'center' }); } catch (e) {} }, 60);
+}
+function closeKeypad() {
+  activeCell = null;
+  document.querySelectorAll('.cell.kp-active').forEach(function(c) { c.classList.remove('kp-active'); });
+  var kp = $('keypad'); if (kp) kp.classList.remove('show');
+  var sc = $('sess-scroll'); if (sc) sc.style.paddingBottom = '';
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+}
+function kpCommit() {
+  if (!activeCell) return;
+  setField(activeCell.getAttribute('data-set'), activeCell.getAttribute('data-field'), activeCell.value);
+}
+function kpPress(ch) {
+  if (!activeCell) return;
+  var field = activeCell.getAttribute('data-field');
+  var v = activeCell.value || '';
+  if (ch === '.') { if (field === 'reps') return; if (v.indexOf('.') >= 0) return; if (v === '') v = '0'; }
+  if (v.length >= 6) return;
+  activeCell.value = v + ch;
+  kpCommit();
+}
+function kpBackspace() {
+  if (!activeCell) return;
+  activeCell.value = (activeCell.value || '').slice(0, -1);
+  kpCommit();
+}
+function kpNext() {
+  if (!activeCell) return;
+  var cells = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll .cell'));
+  var i = cells.indexOf(activeCell);
+  if (i >= 0 && i < cells.length - 1) openKeypad(cells[i + 1]);
+  else closeKeypad();
+}
+
 // ── Session: rest timer ──────────────────────────────────────────────────────────
 function startRest(s) {
   stopRest(true);
@@ -549,7 +594,8 @@ function updateRestUI() {
   if (lbl) lbl.textContent = fmtClock(sessRest.remaining);
   var slot = $('restslot-' + sessRest.setId);
   if (slot) {
-    var pct = Math.min(100, Math.max(0, ((sessRest.total - sessRest.remaining) / sessRest.total) * 100));
+    // start full, drain to empty as the rest counts down
+    var pct = Math.min(100, Math.max(0, (sessRest.remaining / sessRest.total) * 100));
     slot.innerHTML = '<div class="rest-bar"><div class="fill" style="width:' + pct + '%"></div><div class="lbl">' + fmtClock(sessRest.remaining) + '</div></div>';
   }
   if ($('rest-control-sheet').classList.contains('active')) renderRestControl();
@@ -586,6 +632,7 @@ function cancelWorkout() {
 }
 
 function confirmFinish() {
+  closeKeypad();
   var ss = workoutSets(active.id);
   var unfinished = ss.filter(function(s) { return !s.done && (s.weight != null || s.reps != null); });
   var doneCt = ss.filter(function(s) { return s.done; }).length;
@@ -606,6 +653,7 @@ function confirmFinish() {
 }
 
 async function finishWorkout(completeUnfinished) {
+  closeKeypad();
   closeModal('finish-sheet');
   var ss = workoutSets(active.id);
   for (var i = 0; i < ss.length; i++) {

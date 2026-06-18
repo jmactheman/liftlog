@@ -1,6 +1,6 @@
 'use strict';
 
-var CACHE = 'liftlog-v3';
+var CACHE = 'liftlog-v4';
 var ASSETS = [
   '/liftlog/',
   '/liftlog/index.html',
