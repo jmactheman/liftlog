@@ -1,0 +1,13 @@
+{
+  "name": "LiftLog",
+  "short_name": "LiftLog",
+  "description": "Workout tracker — log sets, reps, weight, PRs, rest timers; auto-syncs for your health agent.",
+  "start_url": "/liftlog/",
+  "scope": "/liftlog/",
+  "display": "standalone",
+  "background_color": "#0e1012",
+  "theme_color": "#0e1012",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

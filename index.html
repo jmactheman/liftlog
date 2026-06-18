@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0e1012">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>LiftLog</title>
+<link rel="manifest" href="manifest.json?v=1">
+<link rel="icon" href="icon.svg?v=1">
+<link rel="apple-touch-icon" href="icon.svg?v=1">
+<link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── PROFILE ──────────────────────────────────────────────────────── -->
+  <section id="tab-profile" class="tab-view">
+    <div class="page-head"><h1>Profile</h1></div>
+    <div id="account-strip" class="account-strip"></div>
+    <div class="profile-id">
+      <div class="avatar"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+      <div>
+        <div class="pi-name" id="profile-name">Athlete</div>
+        <div class="pi-sub" id="profile-count">0 workouts</div>
+      </div>
+    </div>
+
+    <div class="section-title">Account</div>
+    <div class="card"><div id="account-box"></div></div>
+
+    <div class="row-between" style="margin-top:22px;">
+      <div class="section-title" style="margin:0;">Locations</div>
+      <button class="btn-ghost btn-small" onclick="addLocationPrompt()">+ Add</button>
+    </div>
+    <p class="muted tiny" style="margin:0 0 10px;">Where you train. The same lift at a different gym isn't the same lift — tag each workout so your data stays comparable.</p>
+    <div id="locations-list" class="loc-list"></div>
+
+    <div class="section-title">Your name</div>
+    <div class="card">
+      <input type="text" id="setting-name" placeholder="Athlete" oninput="saveName(this.value)">
+    </div>
+
+    <div class="section-title">Data</div>
+    <div class="card">
+      <button class="btn btn-dark" onclick="exportJSON()">Export all data (JSON)</button>
+      <p class="muted tiny" style="margin:10px 0 0;">When cloud sync is enabled, finished workouts back up automatically for your health agent to read.</p>
+    </div>
+  </section>
+
+  <!-- ── HISTORY ──────────────────────────────────────────────────────── -->
+  <section id="tab-history" class="tab-view">
+    <div class="page-head"><h1>History</h1></div>
+    <div id="history-list"></div>
+  </section>
+
+  <!-- ── START ────────────────────────────────────────────────────────── -->
+  <section id="tab-start" class="tab-view">
+    <div class="page-head"><h1>Start Workout</h1></div>
+    <div id="resume-banner"></div>
+    <div class="section-title" style="margin-top:8px;">Quick Start</div>
+    <button class="btn" onclick="startEmptyWorkout()">Start an Empty Workout</button>
+    <div class="row-between" style="margin-top:24px;">
+      <div class="section-title" style="margin:0;">Templates</div>
+      <button class="btn-ghost btn-small" onclick="openTemplateBuilder()">+ Template</button>
+    </div>
+    <div id="templates-grid"></div>
+  </section>
+
+  <!-- ── EXERCISES ────────────────────────────────────────────────────── -->
+  <section id="tab-exercises" class="tab-view">
+    <div class="page-head">
+      <h1>Exercises</h1>
+      <button class="head-action" onclick="openExerciseEditor()">New</button>
+    </div>
+    <div class="search-bar">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input type="search" id="ex-search" placeholder="Search" oninput="renderExercises()">
+    </div>
+    <div class="chip-row" id="ex-bodypart-chips"></div>
+    <div id="exercises-list"></div>
+  </section>
+
+</div>
+
+<!-- ── Bottom nav ─────────────────────────────────────────────────────── -->
+<nav id="bottom-nav">
+  <button class="nav-btn" data-tab="profile" onclick="switchTab('profile')">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>Profile</span></button>
+  <button class="nav-btn" data-tab="history" onclick="switchTab('history')">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>History</span></button>
+  <button class="nav-btn start" data-tab="start" onclick="switchTab('start')">
+    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Start</span></button>
+  <button class="nav-btn" data-tab="exercises" onclick="switchTab('exercises')">
+    <svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M4 8l-1.5-1.5M20 16l1.5 1.5M7 4l2 2M15 18l2 2M4.5 9.5l5-5M14.5 19.5l5-5"/></svg><span>Exercises</span></button>
+</nav>
+
+<!-- ── Active session overlay ─────────────────────────────────────────── -->
+<div id="session-overlay">
+  <div class="sess-top">
+    <button class="timer-chip" id="sess-timer-chip" onclick="openRestControl()">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>
+      <span id="sess-timer-label">Rest</span>
+    </button>
+    <button class="btn-green btn-small" style="width:auto;" onclick="confirmFinish()">Finish</button>
+  </div>
+  <div class="sess-scroll" id="sess-scroll"></div>
+</div>
+
+<!-- ── Modals / sheets (populated by app.js) ──────────────────────────── -->
+<div class="modal-overlay" id="exercise-modal"><div class="sheet" id="exercise-modal-body"></div></div>
+<div class="modal-overlay" id="ex-menu-sheet"><div class="sheet" id="ex-menu-body"></div></div>
+<div class="modal-overlay" id="detail-modal"><div class="sheet" id="detail-modal-body"></div></div>
+<div class="modal-overlay" id="hist-menu-sheet"><div class="sheet" id="hist-menu-body"></div></div>
+<div class="modal-overlay" id="finish-sheet"><div class="sheet" id="finish-sheet-body"></div></div>
+<div class="modal-overlay center" id="congrats-modal"><div class="sheet" id="congrats-body"></div></div>
+<div class="modal-overlay" id="rest-control-sheet"><div class="sheet" id="rest-control-body"></div></div>
+<div class="modal-overlay" id="template-modal"><div class="sheet" id="template-modal-body"></div></div>
+<div class="modal-overlay" id="expicker-sheet"><div class="sheet" id="expicker-body"></div></div>
+<div class="modal-overlay center" id="confirm-modal"><div class="sheet" id="confirm-body"></div></div>
+<div class="modal-overlay" id="signin-sheet"><div class="sheet" id="signin-body"></div></div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="db.js?v=1"></script>
+<script src="app.js?v=1"></script>
+<script src="sync.js?v=1"></script>
+<script src="auth.js?v=1"></script>
+</body>
+</html>
