@@ -1,0 +1,12 @@
+# Reference material — design screenshots, not part of the app
+design-reference/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Local scratch
+/tmp/
+*.log
