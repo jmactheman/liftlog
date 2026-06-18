@@ -10,3 +10,8 @@ design-reference/
 # Local scratch
 /tmp/
 *.log
+
+# MCP server — secrets & deps (code is tracked, .env is not)
+mcp/node_modules/
+mcp/.env
+.env
