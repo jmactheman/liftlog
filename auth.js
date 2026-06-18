@@ -11,8 +11,8 @@
 //   3. Allowlist this app's URL under Auth → URL Configuration.
 // The anon key is MEANT to be public — Row-Level Security protects user data.
 // NEVER put the secret key here.
-var SUPABASE_URL = 'YOUR_SUPABASE_URL';
-var SUPABASE_KEY = 'YOUR_SUPABASE_ANON_KEY';
+var SUPABASE_URL = 'https://ztklvpjydltpytqgleqo.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_9ozgrkKwK-Ys4_B3KLUzeA_aysWfUhK';
 
 var sb       = null;
 var authUser = null;
