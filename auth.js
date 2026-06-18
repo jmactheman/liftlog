@@ -30,7 +30,10 @@ function initAuth() {
     renderAccountUI(); renderAccountStrip(); return;
   }
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    // implicit flow: tokens return in the URL hash and are parsed directly. More
+    // robust than PKCE for a static GitHub Pages SPA (no code-exchange step that
+    // depends on a code_verifier surviving the OAuth round-trip).
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' }
   });
   sb.auth.getSession().then(function(res) {
     authUser = (res && res.data && res.data.session) ? res.data.session.user : null;
