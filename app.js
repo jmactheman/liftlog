@@ -347,8 +347,21 @@ function openSession() {
   renderSession();
   $('session-overlay').classList.add('active');
   startSessClock();
+  acquireWakeLock();
 }
-function closeSessionOverlay() { closeKeypad(); $('session-overlay').classList.remove('active'); stopSessClock(); renderAll(); }
+function closeSessionOverlay() { closeKeypad(); releaseWakeLock(); $('session-overlay').classList.remove('active'); stopSessClock(); renderAll(); }
+
+// Screen Wake Lock — keep the display awake during an active workout so the rest
+// bell isn't suspended by iOS auto-lock. iOS releases the lock on tab switch, so
+// we re-acquire when the app becomes visible again while a workout is live.
+var wakeLock = null;
+async function acquireWakeLock() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+function releaseWakeLock() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible' && active) acquireWakeLock();
+});
 
 // live elapsed clock in the title meta
 var _clockInt = null;
@@ -402,7 +415,7 @@ function renderSession() {
         '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="reps" placeholder="' + (p ? p.reps : '0') + '" value="' + (s.reps != null ? s.reps : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'reps\',this.value)">' +
         '<button class="chk ' + (s.done ? 'on' : '') + '" onclick="toggleDone(\'' + s.id + '\')"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>' +
         '</div>' +
-        '<div class="rest-slot" id="restslot-' + s.id + '"></div>';
+        '<div class="rest-slot" id="restslot-' + s.id + '">' + (s.done ? '' : restLineHTML(s)) + '</div>';
     });
     var restSec = ex ? ex.defaultRestSec : DEFAULT_REST;
     html += '<button class="add-set" onclick="addSetTo(\'' + exId + '\')">+ Add Set' + (restSec ? ' (' + fmtClock(restSec) + ')' : '') + '</button></div></div>';
@@ -633,17 +646,27 @@ function restTick() {
   }
   updateRestUI();
 }
+// The editable rest interval shown under an upcoming (not-done) set. Tapping it
+// opens the duration editor for THAT set — changing its rest without starting it.
+function restLineHTML(s) {
+  var txt = s.restSec ? fmtClock(s.restSec) : 'Off';
+  return '<div class="rest-line" onclick="openDurationEditor(\'' + s.id + '\')">' +
+    '<span class="rest-track"></span><span class="rest-val">⏲ ' + txt + '</span><span class="rest-track"></span></div>';
+}
+
 function stopRest(silent) {
   if (sessRest && sessRest.interval) clearInterval(sessRest.interval);
   sessRest = null;
-  if (!silent) updateRestUI();
+  if (!silent) { if (active) renderSession(); updateRestUI(); }
 }
+// Only touches the header chip + the ACTIVE set's slot (fills it with the live
+// bar). Other slots keep their editable rest-line from renderSession().
 function updateRestUI() {
   var chip = $('sess-timer-chip'), lbl = $('sess-timer-label');
-  document.querySelectorAll('.rest-slot').forEach(function(el) { el.innerHTML = ''; });
   if (!sessRest) {
     if (chip) chip.classList.remove('running');
     if (lbl) lbl.textContent = 'Rest';
+    if ($('rest-control-sheet').classList.contains('active')) renderRestControl();
     return;
   }
   if (chip) chip.classList.add('running');
@@ -670,12 +693,64 @@ function renderRestControl() {
         '<button class="adj" onclick="adjustRest(10)">+10</button></div>' +
       '<div class="rc-btns" style="margin-top:12px;">' +
         '<button class="btn btn-dark" onclick="resetRest()">Reset</button>' +
+        '<button class="btn btn-dark" onclick="openActiveRestEditor()">⌨ Edit</button>' +
         '<button class="btn btn-dark" onclick="stopRest();closeModal(\'rest-control-sheet\')">Skip</button></div>' +
     '</div>';
 }
 function adjustRest(d) { if (!sessRest) return; sessRest.remaining = Math.max(1, sessRest.remaining + d); sessRest.total = Math.max(sessRest.total, sessRest.remaining); updateRestUI(); }
 function resetRest() { if (!sessRest) return; sessRest.remaining = sessRest.total; sessRest.paused = false; updateRestUI(); }
 function togglePauseRest() { if (!sessRest) return; sessRest.paused = !sessRest.paused; updateRestUI(); }
+
+// ── Session: rest-duration editor (type any length) ───────────────────────────
+// raw = the digits typed; interpreted right-to-left as M…SS (e.g. "200" → 2:00,
+// "130" → 1:30, "90" → 1:30). kind 'set' edits a set's restSec without starting
+// it; kind 'active' retargets the running timer.
+var durTarget = null;
+function durTotal() {
+  if (!durTarget) return 0;
+  if (durTarget.raw === '') return durTarget.initial || 0;
+  var n = parseInt(durTarget.raw, 10) || 0;
+  return Math.floor(n / 100) * 60 + (n % 100);
+}
+function openDurationEditor(setId) {
+  var s = setLocal(setId); if (!s) return;
+  durTarget = { kind: 'set', setId: setId, initial: s.restSec || 0, raw: '' };
+  renderDurEditor(); openModal('dur-modal');
+}
+function openActiveRestEditor() {
+  if (!sessRest) return;
+  durTarget = { kind: 'active', initial: sessRest.remaining, raw: '' };
+  renderDurEditor(); openModal('dur-modal');
+}
+function renderDurEditor() {
+  var dig = function(d) { return '<button type="button" onclick="durPress(\'' + d + '\')">' + d + '</button>'; };
+  $('dur-body').innerHTML =
+    '<div class="sheet-grab"></div><h2>Rest timer</h2>' +
+    '<div class="dur-display">' + fmtClock(durTotal()) + '</div>' +
+    '<p class="dur-sub">' + (durTarget.kind === 'active' ? 'Adjust the running timer' : 'Rest after this set — won\'t start it') + '</p>' +
+    '<div class="kp-grid">' +
+      dig('1') + dig('2') + dig('3') + dig('4') + dig('5') + dig('6') + dig('7') + dig('8') + dig('9') +
+      '<button type="button" onclick="durClear()">C</button>' + dig('0') +
+      '<button type="button" onclick="durBackspace()">⌫</button>' +
+    '</div>' +
+    '<div class="kp-actions" style="margin-top:10px;">' +
+      '<button type="button" class="kp-done" onclick="closeModal(\'dur-modal\')">Cancel</button>' +
+      '<button type="button" class="kp-next" onclick="durApply()">Set</button>' +
+    '</div>';
+}
+function durPress(d) { durTarget.raw = (durTarget.raw + d).replace(/^0+/, '').slice(-4); renderDurEditor(); }
+function durBackspace() { durTarget.raw = durTarget.raw.slice(0, -1); renderDurEditor(); }
+function durClear() { durTarget.raw = '0'; renderDurEditor(); }
+async function durApply() {
+  var total = durTotal();
+  if (durTarget.kind === 'active') {
+    if (sessRest) { sessRest.total = Math.max(1, total); sessRest.remaining = Math.max(1, total); updateRestUI(); }
+  } else {
+    var s = setLocal(durTarget.setId);
+    if (s) { s.restSec = total; await dbPut('sets', s); renderSession(); }
+  }
+  closeModal('dur-modal');
+}
 
 // ── Session: cancel / finish ──────────────────────────────────────────────────
 function cancelWorkout() {
@@ -734,7 +809,7 @@ async function finishWorkout(completeUnfinished) {
   await dbPut('workouts', active);
   await computePRs(active);
   settings.activeWorkoutId = null; await persistSettings();
-  stopRest(true); stopSessClock();
+  stopRest(true); stopSessClock(); releaseWakeLock();
   var finished = active; active = null;
   $('session-overlay').classList.remove('active');
   renderAll();

@@ -188,9 +188,13 @@ select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg x
 .chk.on { background: var(--green); color: #06210f; }
 .swipe-del { color: var(--red); background: none; border: 0; font-size: 13px; padding: 4px; }
 
-.rest-line { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 50px; }
+.rest-line { display: flex; align-items: center; gap: 10px; padding: 5px 0; cursor: pointer; }
 .rest-line .rest-val { color: var(--accent); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.rest-line .rest-track { flex: 1; height: 2px; background: var(--border); border-radius: 2px; }
+.rest-line:active .rest-val { opacity: .55; }
+.rest-line .rest-track { flex: 1; height: 1px; background: var(--border); }
+
+.dur-display { text-align: center; font-size: 46px; font-weight: 800; font-variant-numeric: tabular-nums; padding: 8px 0 2px; }
+.dur-sub { text-align: center; color: var(--text-dim); font-size: 13px; margin: 0 0 12px; }
 
 .rest-bar { margin: 4px 0; height: 30px; border-radius: 8px; background: var(--card-2); overflow: hidden; position: relative; }
 .rest-bar .fill { position: absolute; inset: 0; background: var(--accent); width: 0%; transition: width .95s linear; }
