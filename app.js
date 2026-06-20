@@ -765,21 +765,41 @@ function cancelWorkout() {
   }, true);
 }
 
+// The effective weight/reps for an unfinished set: what the user typed, else the
+// grey "Previous" placeholder shown in its row (mirrors renderSession). Lets
+// "Finish all unfinished sets" complete a set left on the placeholder, like Strong.
+function setEffective(s) {
+  var w = s.weight, r = s.reps;
+  if (w != null && r != null) return { weight: w, reps: r };
+  var peers = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; });
+  var prev = previousPerf(s.exerciseId, active.location);
+  var p = prev[peers.indexOf(s)] || prev[prev.length - 1];
+  return { weight: w != null ? w : (p ? p.weight : null),
+           reps:   r != null ? r : (p ? p.reps   : null) };
+}
+
 function confirmFinish() {
   closeKeypad();
   var ss = workoutSets(active.id);
-  var unfinished = ss.filter(function(s) { return !s.done && (s.weight != null || s.reps != null); });
   var doneCt = ss.filter(function(s) { return s.done; }).length;
-  if (!doneCt && !unfinished.length) {
+  var unchecked = ss.filter(function(s) { return !s.done; });
+  var completable = unchecked.filter(function(s) {
+    var e = setEffective(s); return e.weight != null && e.reps != null;
+  });
+  // Nothing completed and nothing completable → offer to discard the empty workout.
+  if (!doneCt && !completable.length) {
     showConfirm('Finish empty workout?', 'No sets were completed — this will be discarded.', 'Discard', function() { cancelWorkout(); });
     return;
   }
-  if (!unfinished.length) { finishWorkout(); return; }
+  // No unfinished sets (or none with values) → just finish; empty sets are pruned.
+  if (!unchecked.length || !completable.length) { finishWorkout(); return; }
+  var n = completable.length;
   $('finish-sheet-body').innerHTML =
     '<div class="sheet-grab"></div><h2>Finish Workout?</h2>' +
-    '<p class="sub">Some sets have data but aren\'t checked off. Empty sets will be removed either way.</p>' +
+    '<p class="sub">' + n + ' set' + (n === 1 ? '' : 's') + ' ' + (n === 1 ? 'isn\'t' : 'aren\'t') +
+      ' checked off. Finish them with their shown values, or discard them. Empty sets are removed either way.</p>' +
     '<div class="sheet-actions">' +
-      '<button class="btn btn-green" onclick="finishWorkout(true)">Complete unfinished sets</button>' +
+      '<button class="btn btn-green" onclick="finishWorkout(true)">Finish all unfinished sets</button>' +
       '<button class="btn btn-danger" onclick="finishWorkout(false)">Discard unfinished sets</button>' +
       '<button class="btn btn-dark" onclick="closeModal(\'finish-sheet\')">Cancel</button>' +
     '</div>';
@@ -790,12 +810,19 @@ async function finishWorkout(completeUnfinished) {
   closeKeypad();
   closeModal('finish-sheet');
   var ss = workoutSets(active.id);
+  // Resolve placeholder-backed values up front, before any deletions shift indices.
+  var eff = {};
+  if (completeUnfinished) ss.forEach(function(s) { if (!s.done) eff[s.id] = setEffective(s); });
   for (var i = 0; i < ss.length; i++) {
     var s = ss[i];
-    var hasData = s.weight != null && s.reps != null;
-    if (!s.done) {
-      if (completeUnfinished && hasData) { s.done = true; await dbPut('sets', s); }
-      else { await dbDelete('sets', s.id); DATA.sets = DATA.sets.filter(function(x) { return x.id !== s.id; }); }
+    if (s.done) continue;
+    var e = completeUnfinished ? eff[s.id] : null;
+    if (e && e.weight != null && e.reps != null) {
+      s.weight = e.weight; s.reps = e.reps; s.done = true;
+      await dbPut('sets', s);
+    } else {
+      await dbDelete('sets', s.id);
+      DATA.sets = DATA.sets.filter(function(x) { return x.id !== s.id; });
     }
   }
   // prune exercises with no remaining sets
