@@ -408,13 +408,15 @@ function renderSession() {
     sets.forEach(function(s, i) {
       var p = prev[i] || prev[prev.length - 1];
       var pTxt = p ? (fmtW(p.weight) + ' lb × ' + p.reps) : '—';
-      html += '<div class="set-row ' + (s.done ? 'done' : '') + '" data-set="' + s.id + '">' +
+      html += '<div class="set-swipe" data-set="' + s.id + '">' +
+        '<div class="set-swipe-bg"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>' +
+        '<div class="set-row ' + (s.done ? 'done' : '') + '" data-set="' + s.id + '">' +
         '<div class="c-num"><span class="set-badge" onclick="askDeleteSet(\'' + s.id + '\')">' + (i + 1) + '</span></div>' +
         '<div class="c-prev ' + (p ? 'use' : '') + '">' + pTxt + '</div>' +
         '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="weight" placeholder="' + (p ? fmtW(p.weight) : '0') + '" value="' + (s.weight != null ? fmtW(s.weight) : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'weight\',this.value)">' +
         '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="reps" placeholder="' + (p ? p.reps : '0') + '" value="' + (s.reps != null ? s.reps : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'reps\',this.value)">' +
         '<button class="chk ' + (s.done ? 'on' : '') + '" onclick="toggleDone(\'' + s.id + '\')"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>' +
-        '</div>' +
+        '</div></div>' +
         '<div class="rest-slot" id="restslot-' + s.id + '">' + (s.done ? '' : restLineHTML(s)) + '</div>';
     });
     var restSec = ex ? ex.defaultRestSec : DEFAULT_REST;
@@ -425,6 +427,59 @@ function renderSession() {
     '<button class="btn btn-danger" style="margin-top:14px;" onclick="cancelWorkout()">Cancel Workout</button>';
   sc.innerHTML = html;
   updateRestUI();
+  bindSetSwipe();
+}
+
+// ── Session: swipe-a-set-left-to-delete (Strong-style) ────────────────────────
+// Delegated on the persistent #sess-scroll container, so it survives re-renders.
+// Horizontal drag past a threshold deletes the set; otherwise the row snaps back.
+var _swipe = null;
+function bindSetSwipe() {
+  var sc = $('sess-scroll'); if (!sc || sc._swipeBound) return;
+  sc._swipeBound = true;
+  var THRESH = 90, LOCK = 12;
+  sc.addEventListener('touchstart', function(e) {
+    var row = e.target.closest && e.target.closest('.set-row'); if (!row) return;
+    var t = e.touches[0];
+    _swipe = { row: row, x0: t.clientX, y0: t.clientY, dx: 0, locked: false, abort: false };
+    row.style.transition = 'none';
+  }, { passive: true });
+  sc.addEventListener('touchmove', function(e) {
+    if (!_swipe || _swipe.abort) return;
+    var t = e.touches[0];
+    var dx = t.clientX - _swipe.x0, dy = t.clientY - _swipe.y0;
+    if (!_swipe.locked) {
+      if (Math.abs(dy) > LOCK && Math.abs(dy) > Math.abs(dx)) { _swipe.abort = true; return; }
+      if (Math.abs(dx) > LOCK) _swipe.locked = true; else return;
+    }
+    dx = Math.min(0, dx);                 // only allow left-swipe
+    _swipe.dx = dx;
+    _swipe.row.style.transform = 'translateX(' + dx + 'px)';
+    _swipe.row.parentNode.classList.toggle('swiping', dx < -8);
+    if (e.cancelable) e.preventDefault();  // we own this gesture; block scroll
+  }, { passive: false });
+  function end() {
+    if (!_swipe) return;
+    var sw = _swipe; _swipe = null;
+    var row = sw.row, wrap = row.parentNode;
+    row.style.transition = 'transform .2s ease';
+    if (sw.locked && sw.dx < -THRESH) {
+      row.style.transform = 'translateX(-100%)';
+      var setId = wrap.getAttribute('data-set');
+      setTimeout(function() { deleteSetNow(setId); }, 180);
+    } else {
+      row.style.transform = '';
+      wrap.classList.remove('swiping');
+    }
+  }
+  sc.addEventListener('touchend', end);
+  sc.addEventListener('touchcancel', end);
+}
+async function deleteSetNow(id) {
+  await dbDelete('sets', id);
+  DATA.sets = DATA.sets.filter(function(s) { return s.id !== id; });
+  if (sessRest && sessRest.setId === id) stopRest(true);
+  renderSession();
 }
 
 async function setWorkoutField(field, val) { active[field] = val; await dbPut('workouts', active); }
@@ -655,7 +710,17 @@ function restLineHTML(s) {
 }
 
 function stopRest(silent) {
-  if (sessRest && sessRest.interval) clearInterval(sessRest.interval);
+  if (sessRest) {
+    if (sessRest.interval) clearInterval(sessRest.interval);
+    // Clear the live bar from the slot this timer was occupying so it can't be
+    // left frozen on screen when a new set's rest starts (renderSession redraws
+    // the old bar via updateRestUI just before startRest switches the timer).
+    var slot = $('restslot-' + sessRest.setId);
+    if (slot) {
+      var s = setLocal(sessRest.setId);
+      slot.innerHTML = (s && !s.done) ? restLineHTML(s) : '';
+    }
+  }
   sessRest = null;
   if (!silent) { if (active) renderSession(); updateRestUI(); }
 }

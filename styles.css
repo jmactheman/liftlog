@@ -169,7 +169,13 @@ select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg x
 .set-table .sth { display: grid; grid-template-columns: 42px 1fr 78px 64px 44px; gap: 8px;
   color: var(--text-dim); font-size: 13px; font-weight: 700; padding: 4px 0; align-items: center; }
 .set-table .sth .c-num, .set-table .sth .c-chk { text-align: center; }
-.set-row { display: grid; grid-template-columns: 42px 1fr 78px 64px 44px; gap: 8px; align-items: center; padding: 5px 0; }
+.set-swipe { position: relative; overflow: hidden; }
+.set-swipe-bg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 18px; background: var(--accent); opacity: 0; transition: opacity .12s ease; }
+.set-swipe.swiping .set-swipe-bg { opacity: 1; }
+.set-swipe-bg svg { width: 20px; height: 20px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.set-row { display: grid; grid-template-columns: 42px 1fr 78px 64px 44px; gap: 8px; align-items: center; padding: 5px 0;
+  position: relative; background: var(--bg); touch-action: pan-y; will-change: transform; }
 .set-row.done { }
 .set-row .c-num { text-align: center; }
 .set-row .set-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px;
