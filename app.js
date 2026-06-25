@@ -274,6 +274,17 @@ function deleteExercise(id) {
 var _pickCtx = null;  // 'session' | 'template'
 function openExPicker(ctx) {
   _pickCtx = ctx;
+  // Render the picker chrome (header + search input) once, so the input element
+  // is NOT recreated on each keystroke — recreating it tears the focused input
+  // out of the DOM and dismisses the mobile keyboard. oninput updates only the
+  // list container below.
+  $('expicker-body').innerHTML =
+    '<div class="sheet-grab"></div>' +
+    '<div class="row-between"><h2>Add exercise</h2>' +
+      '<button class="btn-ghost btn-small" onclick="createExerciseFromPicker()">+ New</button></div>' +
+    '<div class="search-bar"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>' +
+      '<input type="search" id="pick-search" placeholder="Search" oninput="renderExPicker(this.value)"></div>' +
+    '<div id="expicker-list"></div>';
   renderExPicker('');
   openModal('expicker-sheet');
 }
@@ -281,12 +292,8 @@ function renderExPicker(q) {
   q = (q || '').toLowerCase();
   var list = DATA.exercises.filter(function(e) { return !q || e.name.toLowerCase().indexOf(q) >= 0; })
     .sort(function(a, b) { return a.name.localeCompare(b.name); });
-  $('expicker-body').innerHTML =
-    '<div class="sheet-grab"></div>' +
-    '<div class="row-between"><h2>Add exercise</h2>' +
-      '<button class="btn-ghost btn-small" onclick="createExerciseFromPicker()">+ New</button></div>' +
-    '<div class="search-bar"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>' +
-      '<input type="search" id="pick-search" placeholder="Search" oninput="renderExPicker(this.value)"></div>' +
+  var el = $('expicker-list'); if (!el) return;
+  el.innerHTML =
     (list.length ? list.map(function(e) {
       return '<div class="ex-row" onclick="pickExercise(\'' + e.id + '\')">' +
         '<div class="ex-ic">' + escapeHtml((e.name[0] || '?').toUpperCase()) + '</div>' +
