@@ -224,6 +224,9 @@ function renderExercises() {
 
 function openExerciseEditor(id) {
   var e = id ? exerciseById(id) : null;
+  // Clear any stale "after save" callback left over from a cancelled picker
+  // "+ New" flow, so it can't misfire on an unrelated save later.
+  saveExercise._then = null;
   var body = $('exercise-modal-body');
   body.innerHTML =
     '<div class="sheet-grab"></div>' +
@@ -302,8 +305,12 @@ function renderExPicker(q) {
     }).join('') : '<div class="empty">No exercises. Tap <strong>+ New</strong> to create one.</div>');
 }
 function createExerciseFromPicker() {
-  saveExercise._then = function(rec) { pickExercise(rec.id); };
+  // Close the picker first: the editor and picker share a z-index and the picker
+  // sits later in the DOM, so leaving it open would paint it ON TOP of the editor
+  // (the editor opens behind it and "+ New" looks like it does nothing).
+  closeModal('expicker-sheet');
   openExerciseEditor();
+  saveExercise._then = function(rec) { pickExercise(rec.id); };
 }
 function pickExercise(exId) {
   closeModal('expicker-sheet');
