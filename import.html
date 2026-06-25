@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LiftLog · Import workout</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0b0d10; color: #e7eaee;
+         padding: 20px max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  h1 { font-size: 20px; margin: 6px 0 2px; }
+  p.sub { color: #95a0ad; margin: 0 0 16px; font-size: 14px; }
+  .card { background: #15181d; border: 1px solid #232830; border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .ex { margin: 10px 0; }
+  .ex b { font-weight: 700; }
+  .ex .sets { color: #95a0ad; font-size: 13px; margin-top: 2px; }
+  button { width: 100%; border: 0; border-radius: 12px; padding: 15px; font-size: 16px; font-weight: 700;
+           background: #dc2626; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  .btn-ghost { background: transparent; color: #95a0ad; font-weight: 600; font-size: 14px; padding: 10px; margin-top: 4px; }
+  #status { margin-top: 14px; font-size: 14px; white-space: pre-wrap; }
+  .ok { color: #34d399; } .warn { color: #fbbf24; } .err { color: #f87171; }
+  code { background: #232830; padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+  <h1>Back-fill a workout</h1>
+  <p class="sub">One-time importer. This writes the workout below into LiftLog on <em>this device</em>, then the app syncs it to your account next time you open it.</p>
+
+  <div class="card">
+    <h2 id="hdr">PF Light Cardio And Biceps</h2>
+    <p class="sub" style="margin:0">Thursday, June 25, 2026 · 12:05 PM</p>
+    <div id="preview"></div>
+  </div>
+
+  <button id="go">Import this workout</button>
+  <button id="reset" class="btn-ghost" hidden>Undo this import</button>
+  <div id="status"></div>
+
+<script src="db.js?v=10"></script>
+<script>
+'use strict';
+
+// ── The workout to back-fill (from the user's Strong log) ────────────────────
+var WORKOUT_KEY = 'import:strong:2026-06-25:pf-light-cardio-biceps';
+var WORKOUT = {
+  label: 'PF Light Cardio And Biceps',
+  date: '2026-06-25',
+  startedAt:  new Date(2026, 5, 25, 12, 5, 0).toISOString(),   // 12:05 PM local
+  finishedAt: new Date(2026, 5, 25, 12, 50, 0).toISOString(),  // ~45 min later
+  exercises: [
+    { name: 'Concentration Curl', bodyPart: 'Arms', category: 'Dumbbell', strong: 'Concentration Curl (Dumbbell)',
+      sets: [[25,10],[25,10],[25,10],[25,10]] },
+    { name: 'Hammer Curl',        bodyPart: 'Arms', category: 'Dumbbell', strong: 'Hammer Curl (Dumbbell)',
+      sets: [[25,10],[25,10],[25,10],[25,10]] },
+    { name: 'PF Curl Machine',    bodyPart: 'Arms', category: 'Machine',  strong: 'PF Curl Machine',
+      sets: [[55,12],[55,12],[55,12],[55,12]] },
+    { name: 'Leg Extension',      bodyPart: 'Legs', category: 'Machine',  strong: 'Leg Extension (Machine)',
+      sets: [[165,10],[165,10]] }
+  ]
+};
+
+// ── Helpers (mirroring app.js) ───────────────────────────────────────────────
+var _c = 0;
+function genId() { return 'id_' + Date.now().toString(36) + (_c++).toString(36) + Math.random().toString(36).slice(2, 6); }
+function epley(w, r) { if (!w || !r) return 0; return Math.round(w * (1 + r / 30)); }
+function norm(s) { return (s || '').toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, ' ').trim(); }
+function $(id) { return document.getElementById(id); }
+function setStatus(html, cls) { var el = $('status'); el.innerHTML = html; el.className = cls || ''; }
+
+// ── Preview ──────────────────────────────────────────────────────────────────
+(function preview() {
+  var h = '';
+  WORKOUT.exercises.forEach(function(e) {
+    var w = e.sets[0][0], reps = e.sets.map(function(s){return s[1];});
+    var same = reps.every(function(r){return r===reps[0];});
+    var line = same ? (e.sets.length + ' × ' + w + ' lb × ' + reps[0])
+                    : e.sets.map(function(s){return s[0]+'×'+s[1];}).join(', ');
+    h += '<div class="ex"><b>' + e.name + '</b><div class="sets">' + line + '</div></div>';
+  });
+  $('preview').innerHTML = h;
+})();
+
+// ── Import ───────────────────────────────────────────────────────────────────
+async function runImport() {
+  $('go').disabled = true;
+  setStatus('Importing…');
+  try {
+    var existingWorkouts = await dbGetAll('workouts');
+    if (existingWorkouts.some(function(w) { return w._importKey === WORKOUT_KEY; })) {
+      setStatus('✓ This workout is already imported on this device. Just open LiftLog to sync it.', 'ok');
+      $('reset').hidden = false;
+      return;
+    }
+
+    var existingEx  = await dbGetAll('exercises');
+    var allSets     = await dbGetAll('sets');
+    var settingsRec = await dbGet('settings', 'app');
+    var locations   = (settingsRec && settingsRec.locations) || [];
+    // Re-use an existing Planet Fitness location if the user has one; else leave blank.
+    var location = locations.filter(function(l){ return /^pf\b/i.test(l) || /planet\s*fitness/i.test(l); })[0] || '';
+
+    var workoutId = genId();
+    var workoutsById = {}; existingWorkouts.forEach(function(w){ workoutsById[w.id] = w; });
+
+    // Resolve each exercise: re-use a matching one from the library, or create it.
+    var createdNames = [], reusedNames = [];
+    WORKOUT.exercises.forEach(function(def) {
+      var match = existingEx.filter(function(e) {
+        return norm(e.name) === norm(def.name) || (e.name || '').toLowerCase() === def.strong.toLowerCase();
+      })[0];
+      if (match) { def.rec = match; reusedNames.push(match.name); }
+      else {
+        def.rec = { id: genId(), name: def.name, bodyPart: def.bodyPart, category: def.category,
+                    defaultRestSec: 120, createdAt: WORKOUT.startedAt };
+        def.created = true; createdNames.push(def.name);
+      }
+    });
+
+    // Build the sets (all marked done), with strictly-increasing seq.
+    var seq = allSets.reduce(function(m, s){ return Math.max(m, s.seq || 0); }, 0) + 1;
+    var newSets = [];
+    WORKOUT.exercises.forEach(function(def) {
+      def.sets.forEach(function(sr) {
+        newSets.push({ id: genId(), workoutId: workoutId, exerciseId: def.rec.id, exerciseName: def.rec.name,
+          weight: sr[0], reps: sr[1], done: true, restSec: def.rec.defaultRestSec || 120,
+          seq: seq++, isPR: false, prTypes: [] });
+      });
+    });
+
+    // PR detection vs prior finished sets for the same exercise + location (mirrors computePRs).
+    WORKOUT.exercises.forEach(function(def) {
+      var prior = allSets.filter(function(s) {
+        if (s.exerciseId !== def.rec.id || !s.done) return false;
+        var w = workoutsById[s.workoutId];
+        return w && w.finishedAt && w.location === location && new Date(w.finishedAt) < new Date(WORKOUT.finishedAt);
+      });
+      var bestW = 0, bestV = 0, best1 = 0;
+      prior.forEach(function(s) {
+        bestW = Math.max(bestW, s.weight || 0);
+        bestV = Math.max(bestV, (s.weight || 0) * (s.reps || 0));
+        best1 = Math.max(best1, epley(s.weight, s.reps));
+      });
+      newSets.filter(function(s){ return s.exerciseId === def.rec.id; }).forEach(function(s) {
+        var w = s.weight || 0, v = w * (s.reps || 0), e = epley(s.weight, s.reps), types = [];
+        if (w > bestW) { types.push('WEIGHT'); bestW = w; }
+        if (v > bestV) { types.push('VOL');    bestV = v; }
+        if (e > best1) { types.push('1RM');    best1 = e; }
+        s.prTypes = types; s.isPR = types.length > 0;
+      });
+    });
+
+    var workout = {
+      id: workoutId, date: WORKOUT.date, startedAt: WORKOUT.startedAt, finishedAt: WORKOUT.finishedAt,
+      label: WORKOUT.label, location: location, notes: '',
+      exerciseOrder: WORKOUT.exercises.map(function(d){ return d.rec.id; }),
+      createdAt: WORKOUT.startedAt, _importKey: WORKOUT_KEY
+    };
+
+    // Write everything (dbPut stamps updatedAt + queues it for cloud push).
+    for (var i = 0; i < WORKOUT.exercises.length; i++) {
+      if (WORKOUT.exercises[i].created) await dbPut('exercises', WORKOUT.exercises[i].rec);
+    }
+    await dbPut('workouts', workout);
+    for (var j = 0; j < newSets.length; j++) await dbPut('sets', newSets[j]);
+
+    var msg = '✓ Imported — 4 exercises, ' + newSets.length + ' sets.\n';
+    msg += createdNames.length ? ('Created new: ' + createdNames.join(', ') + '\n') : '';
+    msg += reusedNames.length  ? ('Re-used existing: ' + reusedNames.join(', ') + '\n') : '';
+    msg += 'Location: ' + (location || '(none — set it in the app if you want)') + '\n\n';
+    msg += 'Now open LiftLog (close & reopen it) — it will sync this up to your account automatically.';
+    setStatus(msg, 'ok');
+    $('reset').hidden = false;
+  } catch (e) {
+    setStatus('Import failed: ' + (e && e.message ? e.message : e) + '\nNothing was partially saved that the app can\'t handle — you can retry.', 'err');
+    $('go').disabled = false;
+  }
+}
+
+// Undo: remove exactly what this importer added (by _importKey), in case of a mistake.
+async function undoImport() {
+  $('reset').disabled = true;
+  setStatus('Undoing…');
+  try {
+    var ws = (await dbGetAll('workouts')).filter(function(w){ return w._importKey === WORKOUT_KEY; });
+    for (var i = 0; i < ws.length; i++) {
+      var sets = (await dbGetAll('sets')).filter(function(s){ return s.workoutId === ws[i].id; });
+      for (var j = 0; j < sets.length; j++) await dbDelete('sets', sets[j].id);
+      await dbDelete('workouts', ws[i].id);
+    }
+    setStatus('✓ Removed the imported workout from this device. (Exercises in your library were left alone.)\nOpen LiftLog to sync the removal.', 'warn');
+    $('reset').hidden = true;
+    $('go').disabled = false;
+  } catch (e) {
+    setStatus('Undo failed: ' + (e && e.message ? e.message : e), 'err');
+    $('reset').disabled = false;
+  }
+}
+
+$('go').addEventListener('click', runImport);
+$('reset').addEventListener('click', undoImport);
+</script>
+</body>
+</html>
