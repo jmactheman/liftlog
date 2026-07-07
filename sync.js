@@ -40,6 +40,15 @@ function errText(e) {
 function rowForRecord(rec, uid) { return { id: rec.id, user_id: uid, data: rec, updated_at: rec.updatedAt || nowISO(), deleted: false }; }
 function rowForTombstone(t, uid) { return { id: t.id, user_id: uid, data: {}, updated_at: t.updatedAt || nowISO(), deleted: true }; }
 
+// Timestamps come in two formats — local records store toISOString() ("…Z"),
+// Postgres returns timestamptz ("…+00:00") — so compare as epoch ms, never as
+// strings. Missing/invalid → 0 (older than everything).
+function ts(x) { var t = new Date(x || 0).getTime(); return isNaN(t) ? 0 : t; }
+
+// Supabase caps every response at its max-rows setting (default 1000) no matter
+// what limit you request, so pull page-by-page until a page comes back empty.
+var PULL_PAGE = 1000;
+
 async function _pullAll(uid) {
   var tombs = await dbGetTombstones();
   var tombByKey = {};
@@ -47,29 +56,34 @@ async function _pullAll(uid) {
   var applied = 0;
   for (var i = 0; i < STORES.length; i++) {
     var store = STORES[i];
-    var res = await sb.from(store).select('id,data,updated_at,deleted');
-    if (res.error) throw res.error;
-    var rows = res.data || [];
-    for (var r = 0; r < rows.length; r++) applied += await _mergeRemoteRow(store, rows[r], tombByKey);
+    var from = 0;
+    for (;;) {
+      var res = await sb.from(store).select('id,data,updated_at,deleted')
+        .order('id', { ascending: true }).range(from, from + PULL_PAGE - 1);
+      if (res.error) throw res.error;
+      var rows = res.data || [];
+      for (var r = 0; r < rows.length; r++) applied += await _mergeRemoteRow(store, rows[r], tombByKey);
+      if (!rows.length) break;
+      from += rows.length;
+    }
   }
   return applied;
 }
 
 async function _mergeRemoteRow(store, row, tombByKey) {
-  var id = row.id, remoteTs = row.updated_at || '', key = store + ':' + id;
+  var id = row.id, remoteTs = ts(row.updated_at), key = store + ':' + id;
   var localRec = await dbGet(store, id);
   var localTomb = tombByKey[key];
   if (row.deleted) {
-    if (localRec) { var lts = localRec.updatedAt || ''; if (remoteTs >= lts) { await dbDelete(store, id, { raw: true }); return 1; } }
+    if (localRec && remoteTs >= ts(localRec.updatedAt)) { await dbDelete(store, id, { raw: true }); return 1; }
     return 0;
   }
   if (localTomb) {
-    if (localTomb.updatedAt > remoteTs) return 0;
+    if (ts(localTomb.updatedAt) > remoteTs) return 0;
     await dbPut(store, row.data, { raw: true }); await dbClearTombstone(key); return 1;
   }
   if (!localRec) { await dbPut(store, row.data, { raw: true }); return 1; }
-  var localTs = localRec.updatedAt || '';
-  if (remoteTs > localTs) { await dbPut(store, row.data, { raw: true }); return 1; }
+  if (remoteTs > ts(localRec.updatedAt)) { await dbPut(store, row.data, { raw: true }); return 1; }
   return 0;
 }
 

@@ -106,10 +106,10 @@ function renderAll() {
 async function boot() {
   await loadAllData();
   renderAll();
-  switchTab(active ? 'start' : 'start');
+  switchTab('start');
   if (active) openSession();
   if ('serviceWorker' in navigator) {
-    try { navigator.serviceWorker.register('sw.js?v=1'); } catch (e) {}
+    try { navigator.serviceWorker.register('sw.js?v=2'); } catch (e) {}
   }
 }
 
@@ -146,28 +146,34 @@ function saveName(v) {
 
 function renderLocations() {
   var el = $('locations-list'); if (!el) return;
-  el.innerHTML = settings.locations.map(function(loc) {
+  // Locations are user text — never interpolate them into onclick JS (an
+  // apostrophe would break out of the string). Reference by index instead.
+  el.innerHTML = settings.locations.map(function(loc, i) {
     return '<div class="loc-item"><span>' + escapeHtml(loc) + '</span>' +
-      '<button onclick="removeLocation(\'' + escapeHtml(loc).replace(/'/g, "\\'") + '\')">Remove</button></div>';
+      '<button onclick="removeLocation(' + i + ')">Remove</button></div>';
   }).join('') || '<p class="muted tiny">No locations yet.</p>';
 }
-function addLocationPrompt() {
+// fromPicker: opened from the "Where are you training?" sheet — return to it
+// after adding (or cancelling) instead of abandoning the start-workout flow.
+function addLocationPrompt(fromPicker) {
+  var backToPicker = fromPicker && _locPickCb;
   $('confirm-body').innerHTML =
     '<h2>Add location</h2><p class="sub">e.g. "PF Highland Village", "Home", "Work".</p>' +
     '<input type="text" id="new-loc" placeholder="Location name" autocomplete="off">' +
     '<div class="sheet-actions"><button class="btn" id="loc-save">Add</button>' +
-    '<button class="btn btn-dark" onclick="closeModal(\'confirm-modal\')">Cancel</button></div>';
+    '<button class="btn btn-dark" onclick="' + (backToPicker ? 'renderLocPicker()' : 'closeModal(\'confirm-modal\')') + '">Cancel</button></div>';
   openModal('confirm-modal');
   setTimeout(function() { $('new-loc').focus(); }, 60);
   $('loc-save').onclick = async function() {
     var v = ($('new-loc').value || '').trim();
     if (!v) return;
     if (settings.locations.indexOf(v) < 0) settings.locations.push(v);
-    await persistSettings(); renderLocations(); closeModal('confirm-modal');
+    await persistSettings(); renderLocations();
+    if (backToPicker) renderLocPicker(); else closeModal('confirm-modal');
   };
 }
-async function removeLocation(loc) {
-  settings.locations = settings.locations.filter(function(l) { return l !== loc; });
+async function removeLocation(i) {
+  settings.locations.splice(i, 1);
   await persistSettings(); renderLocations();
 }
 
@@ -223,10 +229,11 @@ function renderExercises() {
 }
 
 function openExerciseEditor(id) {
-  var e = id ? exerciseById(id) : null;
-  // Clear any stale "after save" callback left over from a cancelled picker
-  // "+ New" flow, so it can't misfire on an unrelated save later.
+  // Clear any picker follow-up from a previous "+ New" that was cancelled, so a
+  // later normal save can't fire a stale pickExercise(). (createExerciseFromPicker
+  // re-sets it after opening.)
   saveExercise._then = null;
+  var e = id ? exerciseById(id) : null;
   var body = $('exercise-modal-body');
   body.innerHTML =
     '<div class="sheet-grab"></div>' +
@@ -331,17 +338,28 @@ async function startEmptyWorkout(presetLabel) {
   });
 }
 
+var _locPickCb = null;
 function pickLocationThen(cb) {
-  var locs = settings.locations.slice();
+  _locPickCb = cb;
+  renderLocPicker();
+  openModal('confirm-modal');
+}
+function renderLocPicker() {
+  // Buttons reference locations by index — names are user text and must never
+  // be interpolated into onclick JS (apostrophes would break the handler).
   $('confirm-body').innerHTML =
     '<h2>Where are you training?</h2>' +
     '<div class="loc-list" style="margin-top:6px;">' +
-      locs.map(function(l) { return '<button class="btn btn-dark" style="justify-content:flex-start;" onclick="__pickLoc(\'' + escapeHtml(l).replace(/'/g, "\\'") + '\')">' + escapeHtml(l) + '</button>'; }).join('') +
+      settings.locations.map(function(l, i) { return '<button class="btn btn-dark" style="justify-content:flex-start;" onclick="pickLocByIndex(' + i + ')">' + escapeHtml(l) + '</button>'; }).join('') +
     '</div>' +
-    '<div class="sheet-actions"><button class="btn-ghost" onclick="addLocationPrompt()">+ Add location</button>' +
+    '<div class="sheet-actions"><button class="btn-ghost" onclick="addLocationPrompt(true)">+ Add location</button>' +
     '<button class="btn btn-dark" onclick="closeModal(\'confirm-modal\')">Cancel</button></div>';
-  openModal('confirm-modal');
-  window.__pickLoc = function(l) { closeModal('confirm-modal'); cb(l); };
+}
+function pickLocByIndex(i) {
+  var l = settings.locations[i]; if (l == null) return;
+  closeModal('confirm-modal');
+  var cb = _locPickCb; _locPickCb = null;
+  if (cb) cb(l);
 }
 
 async function createWorkout(loc, label) {
@@ -374,7 +392,11 @@ async function acquireWakeLock() {
 }
 function releaseWakeLock() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
 document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'visible' && active) acquireWakeLock();
+  if (document.visibilityState === 'visible' && active) {
+    acquireWakeLock();
+    // catch the countdown up immediately after background throttling
+    if (sessRest && !sessRest.paused) restTick();
+  }
 });
 
 // live elapsed clock in the title meta
@@ -442,6 +464,7 @@ function renderSession() {
   sc.innerHTML = html;
   updateRestUI();
   bindSetSwipe();
+  reattachKeypad();
 }
 
 // ── Session: swipe-a-set-left-to-delete (Strong-style) ────────────────────────
@@ -526,7 +549,8 @@ function setLocal(id) { return DATA.sets.filter(function(s) { return s.id === id
 
 async function setField(id, field, val) {
   var s = setLocal(id); if (!s) return;
-  s[field] = field === 'reps' ? (val === '' ? null : parseInt(val, 10)) : num(val);
+  if (field === 'reps') { var r = parseInt(val, 10); s.reps = isNaN(r) ? null : r; }
+  else s[field] = num(val);
   await dbPut('sets', s);
 }
 
@@ -616,6 +640,17 @@ function closeKeypad() {
   var sc = $('sess-scroll'); if (sc) sc.style.paddingBottom = '';
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
 }
+// renderSession() replaces the whole #sess-scroll DOM; if the keypad was open,
+// activeCell would point at a detached input (e.g. when the rest timer hits 0
+// mid-typing and re-renders). Re-find the same cell in the fresh DOM, or close
+// the keypad if its set is gone.
+function reattachKeypad() {
+  if (!activeCell) return;
+  var el = document.querySelector('#sess-scroll .cell[data-set="' + activeCell.getAttribute('data-set') +
+    '"][data-field="' + activeCell.getAttribute('data-field') + '"]');
+  if (el) { activeCell = el; el.classList.add('kp-active'); }
+  else closeKeypad();
+}
 function kpCommit() {
   if (!activeCell) return;
   setField(activeCell.getAttribute('data-set'), activeCell.getAttribute('data-field'), activeCell.value);
@@ -699,13 +734,17 @@ function playChime() {
 function startRest(s) {
   stopRest(true);
   ensureAudio();   // unlock audio on this tap so the bell can ring at 0
-  sessRest = { setId: s.id, exerciseId: s.exerciseId, total: s.restSec, remaining: s.restSec, paused: false, interval: null };
+  // `endAt` is the source of truth while running; `remaining` is derived from it
+  // each tick, so the countdown stays accurate even when the browser throttles
+  // background timers (paused timers hold `remaining` and recompute endAt on resume).
+  sessRest = { setId: s.id, exerciseId: s.exerciseId, total: s.restSec, remaining: s.restSec,
+    endAt: Date.now() + s.restSec * 1000, paused: false, interval: null };
   sessRest.interval = setInterval(restTick, 1000);
   updateRestUI();
 }
 function restTick() {
   if (!sessRest || sessRest.paused) return;
-  sessRest.remaining -= 1;
+  sessRest.remaining = Math.max(0, Math.round((sessRest.endAt - Date.now()) / 1000));
   if (sessRest.remaining <= 0) {
     playChime();
     if (navigator.vibrate) { try { navigator.vibrate([300, 120, 300, 120, 300]); } catch (e) {} }
@@ -776,9 +815,26 @@ function renderRestControl() {
         '<button class="btn btn-dark" onclick="stopRest();closeModal(\'rest-control-sheet\')">Skip</button></div>' +
     '</div>';
 }
-function adjustRest(d) { if (!sessRest) return; sessRest.remaining = Math.max(1, sessRest.remaining + d); sessRest.total = Math.max(sessRest.total, sessRest.remaining); updateRestUI(); }
-function resetRest() { if (!sessRest) return; sessRest.remaining = sessRest.total; sessRest.paused = false; updateRestUI(); }
-function togglePauseRest() { if (!sessRest) return; sessRest.paused = !sessRest.paused; updateRestUI(); }
+function adjustRest(d) {
+  if (!sessRest) return;
+  sessRest.remaining = Math.max(1, sessRest.remaining + d);
+  if (!sessRest.paused) sessRest.endAt = Date.now() + sessRest.remaining * 1000;
+  sessRest.total = Math.max(sessRest.total, sessRest.remaining);
+  updateRestUI();
+}
+function resetRest() {
+  if (!sessRest) return;
+  sessRest.remaining = sessRest.total;
+  sessRest.endAt = Date.now() + sessRest.total * 1000;
+  sessRest.paused = false;
+  updateRestUI();
+}
+function togglePauseRest() {
+  if (!sessRest) return;
+  if (sessRest.paused) { sessRest.endAt = Date.now() + sessRest.remaining * 1000; sessRest.paused = false; }
+  else { sessRest.remaining = Math.max(0, Math.round((sessRest.endAt - Date.now()) / 1000)); sessRest.paused = true; }
+  updateRestUI();
+}
 
 // ── Session: rest-duration editor (type any length) ───────────────────────────
 // raw = the digits typed; interpreted right-to-left as M…SS (e.g. "200" → 2:00,
@@ -823,7 +879,12 @@ function durClear() { durTarget.raw = '0'; renderDurEditor(); }
 async function durApply() {
   var total = durTotal();
   if (durTarget.kind === 'active') {
-    if (sessRest) { sessRest.total = Math.max(1, total); sessRest.remaining = Math.max(1, total); updateRestUI(); }
+    if (sessRest) {
+      sessRest.total = Math.max(1, total);
+      sessRest.remaining = Math.max(1, total);
+      sessRest.endAt = Date.now() + sessRest.remaining * 1000;
+      updateRestUI();
+    }
   } else {
     var s = setLocal(durTarget.setId);
     if (s) { s.restSec = total; await dbPut('sets', s); renderSession(); }
@@ -1204,7 +1265,8 @@ function renderResume() {
 // ── Export ───────────────────────────────────────────────────────────────────
 function exportJSON() {
   var payload = { app: 'liftlog', exportedAt: new Date().toISOString(),
-    exercises: DATA.exercises, workouts: DATA.workouts, sets: DATA.sets, templates: DATA.templates };
+    exercises: DATA.exercises, workouts: DATA.workouts, sets: DATA.sets, templates: DATA.templates,
+    settings: settings };
   var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

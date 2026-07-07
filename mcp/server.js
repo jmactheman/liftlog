@@ -43,15 +43,24 @@ if (!URL || !KEY) {
 }
 
 // ── Supabase REST helpers ─────────────────────────────────────────────────────
+// Supabase caps every response at its max-rows setting (default 1000) no matter
+// what limit you request, so page through until a page comes back empty.
+const PAGE = 1000;
 async function fetchTable(table) {
-  let url = `${URL}/rest/v1/${table}?select=id,data,deleted&deleted=eq.false&limit=20000`;
-  if (USER_ID) url += `&user_id=eq.${encodeURIComponent(USER_ID)}`;
-  const res = await fetch(url, {
-    headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
-  });
-  if (!res.ok) throw new Error(`Supabase ${table} ${res.status}: ${await res.text()}`);
-  const rows = await res.json();
-  return rows.map(r => r.data).filter(Boolean);
+  const out = [];
+  for (let offset = 0; ; ) {
+    let url = `${URL}/rest/v1/${table}?select=id,data,deleted&deleted=eq.false&order=id.asc&limit=${PAGE}&offset=${offset}`;
+    if (USER_ID) url += `&user_id=eq.${encodeURIComponent(USER_ID)}`;
+    const res = await fetch(url, {
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
+    });
+    if (!res.ok) throw new Error(`Supabase ${table} ${res.status}: ${await res.text()}`);
+    const rows = await res.json();
+    for (const r of rows) if (r.data) out.push(r.data);
+    if (!rows.length) break;
+    offset += rows.length;
+  }
+  return out;
 }
 
 // ── Domain helpers ────────────────────────────────────────────────────────────
@@ -178,6 +187,7 @@ server.tool(
   async ({ exercise, limit }) => {
     const { finished, setsByWorkout } = await loadAll();
     const q = exercise ? exercise.trim().toLowerCase() : null;
+    const lim = limit || 50;
     const prs = [];
     for (const w of finished) {
       for (const s of (setsByWorkout[w.id] || [])) {
@@ -186,8 +196,9 @@ server.tool(
         prs.push({ date: w.date || (w.finishedAt || '').slice(0, 10), exercise: s.exerciseName,
           location: w.location || null, weight_lb: s.weight, reps: s.reps,
           est_1rm: epley(s.weight, s.reps), types: s.prTypes });
+        if (prs.length >= lim) break;
       }
-      if (prs.length >= (limit || 50)) break;
+      if (prs.length >= lim) break;
     }
     return ok({ count: prs.length, personal_records: prs });
   }
