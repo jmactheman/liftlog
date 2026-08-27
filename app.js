@@ -10,6 +10,28 @@ var CATEGORIES = ['Barbell','Dumbbell','Machine','Smith Machine','Cable','Bodywe
 var DEFAULT_REST = 120;
 var REST_CHOICES = [0,30,45,60,90,120,150,180,210,240,300];
 
+// ── Exercise types ─────────────────────────────────────────────────────────────
+// Each type declares which metric fields a set records. Cardio ('distance_time')
+// logs miles + duration, like Strong. Sets carry whichever subset of
+// weight/reps/distance/duration their exercise's type uses; the rest stay null.
+var EX_TYPES = {
+  weight_reps:   { label: 'Weight & Reps',   fields: ['weight', 'reps'] },
+  bodyweight:    { label: 'Bodyweight Reps',  fields: ['reps'] },
+  distance_time: { label: 'Distance & Time',  fields: ['distance', 'duration'] },
+  time:          { label: 'Duration',         fields: ['duration'] }
+};
+var EX_TYPE_ORDER = ['weight_reps', 'bodyweight', 'distance_time', 'time'];
+// Per-field display: column width, header, and input kind. 'duration' is entered
+// via the MM:SS modal (openSetTimeEditor), not the numeric keypad.
+var FIELD = {
+  weight:   { header: 'lbs',   col: '78px', keypad: true,  int: false },
+  reps:     { header: 'Reps',  col: '64px', keypad: true,  int: true  },
+  distance: { header: 'Miles', col: '78px', keypad: true,  int: false },
+  duration: { header: 'Time',  col: '86px', keypad: false, int: false }
+};
+function exType(ex) { return (ex && EX_TYPES[ex.type]) ? ex.type : 'weight_reps'; }
+function exFields(ex) { return EX_TYPES[exType(ex)].fields; }
+
 // ── State ────────────────────────────────────────────────────────────────────
 var DATA = { exercises: [], workouts: [], sets: [], templates: [] };
 var settings = { id: 'app', userName: '', locations: ['Home'], activeWorkoutId: null };
@@ -41,6 +63,13 @@ function fmtDuration(ms) {
   var min = Math.round(ms / 60000);
   if (min < 60) return min + 'm';
   var h = Math.floor(min / 60); return h + 'h ' + (min % 60) + 'm';
+}
+// A set's elapsed duration in seconds → "M:SS", or "H:MM:SS" past an hour.
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  var p = function(n) { return (n < 10 ? '0' : '') + n; };
+  return h ? (h + ':' + p(m) + ':' + p(s)) : (m + ':' + p(s));
 }
 function fmtDateLong(iso) {
   var d = new Date(iso);
@@ -189,12 +218,32 @@ function renderBodyChips() {
 }
 function setBodyFilter(p) { exFilterBody = p; renderBodyChips(); renderExercises(); }
 
-// Best (heaviest) done set per exercise, for the library stat line.
+// The metric that ranks "best" for a type: heaviest weight, most reps, longest
+// distance, or longest time. Used for PRs, the library stat, and history bests.
+function bestMetric(s, t) {
+  if (t === 'bodyweight') return s.reps || 0;
+  if (t === 'distance_time') return s.distance || 0;
+  if (t === 'time') return s.duration || 0;
+  return s.weight || 0;
+}
+// A compact one-line summary of a set, formatted for its exercise type.
+function setSummary(s, ex) {
+  var t = exType(ex);
+  if (t === 'bodyweight') return (s.reps != null ? s.reps : '—') + ' reps';
+  if (t === 'distance_time') {
+    var d = s.distance != null ? fmtW(s.distance) + ' mi' : '';
+    var tm = s.duration != null ? fmtDur(s.duration) : '';
+    return [d, tm].filter(Boolean).join(' · ') || '—';
+  }
+  if (t === 'time') return s.duration != null ? fmtDur(s.duration) : '—';
+  return fmtW(s.weight) + ' lb × ' + s.reps;
+}
+// Best done set for an exercise's library stat line (ranked by its type metric).
 function bestSetFor(exId) {
-  var best = null;
+  var ex = exerciseById(exId), t = exType(ex), best = null;
   DATA.sets.forEach(function(s) {
-    if (s.exerciseId !== exId || !s.done || s.weight == null) return;
-    if (!best || s.weight > best.weight) best = s;
+    if (s.exerciseId !== exId || !s.done) return;
+    if (!best || bestMetric(s, t) > bestMetric(best, t)) best = s;
   });
   return best;
 }
@@ -217,7 +266,7 @@ function renderExercises() {
     var L = (e.name[0] || '#').toUpperCase();
     if (L !== letter) { letter = L; html += '<div class="az-head">' + escapeHtml(L) + '</div>'; }
     var b = bestSetFor(e.id);
-    var stat = b ? (fmtW(b.weight) + ' lb × ' + b.reps) : '';
+    var stat = b ? setSummary(b, e) : '';
     html += '<div class="ex-row" onclick="openExerciseEditor(\'' + e.id + '\')">' +
       '<div class="ex-ic">' + escapeHtml((e.name[0] || '?').toUpperCase()) + '</div>' +
       '<div class="ex-main"><div class="ex-name">' + escapeHtml(e.name) + '</div>' +
@@ -239,6 +288,9 @@ function openExerciseEditor(id) {
     '<div class="sheet-grab"></div>' +
     '<h2>' + (e ? 'Edit exercise' : 'New exercise') + '</h2>' +
     '<label class="field"><span>Name</span><input type="text" id="ex-name" placeholder="e.g. Smith Bench" value="' + escapeHtml(e ? e.name : '') + '"></label>' +
+    '<label class="field"><span>Type</span><select id="ex-type">' +
+      EX_TYPE_ORDER.map(function(t) { return '<option value="' + t + '" ' + (exType(e) === t ? 'selected' : '') + '>' + EX_TYPES[t].label + '</option>'; }).join('') +
+    '</select></label>' +
     '<label class="field"><span>Body part</span><select id="ex-body">' +
       BODY_PARTS.map(function(p) { return '<option ' + (e && e.bodyPart === p ? 'selected' : '') + '>' + p + '</option>'; }).join('') +
     '</select></label>' +
@@ -262,6 +314,7 @@ async function saveExercise(id) {
   var e = id ? exerciseById(id) : null;
   var rec = e || { id: genId(), createdAt: new Date().toISOString() };
   rec.name = name;
+  rec.type = $('ex-type').value;
   rec.bodyPart = $('ex-body').value;
   rec.category = $('ex-cat').value;
   rec.defaultRestSec = parseInt($('ex-rest').value, 10);
@@ -421,6 +474,22 @@ function previousPerf(exId, loc) {
   return [];
 }
 
+// "Previous" column text for a set row — a prior done set summarised by type.
+function prevText(p, ex) { return p ? setSummary(p, ex) : '—'; }
+
+// One metric cell for a set. Numeric fields drive the keypad; 'duration' opens
+// the MM:SS time editor on tap and shows the previous value as a faded default.
+function cellHTML(s, field, p) {
+  if (field === 'duration') {
+    var has = s.duration != null;
+    var disp = has ? fmtDur(s.duration) : (p && p.duration != null ? fmtDur(p.duration) : '0:00');
+    return '<div class="cell timecell' + (has ? '' : ' ph') + '" data-set="' + s.id + '" data-field="duration" onclick="openSetTimeEditor(\'' + s.id + '\')">' + disp + '</div>';
+  }
+  var val = s[field] != null ? (field === 'reps' ? s[field] : fmtW(s[field])) : '';
+  var ph  = (p && p[field] != null) ? (field === 'reps' ? p[field] : fmtW(p[field])) : '0';
+  return '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="' + field + '" placeholder="' + ph + '" value="' + val + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'' + field + '\',this.value)">';
+}
+
 function renderSession() {
   if (!active) return;
   var sc = $('sess-scroll');
@@ -435,22 +504,24 @@ function renderSession() {
   active.exerciseOrder.forEach(function(exId) {
     var ex = exerciseById(exId);
     var name = ex ? ex.name : 'Exercise';
+    var fields = exFields(ex);
+    var grid = '42px 1fr ' + fields.map(function(f) { return FIELD[f].col; }).join(' ') + ' 44px';
     var sets = workoutSets(active.id).filter(function(s) { return s.exerciseId === exId; });
     var prev = previousPerf(exId, active.location);
     html += '<div class="ex-block" data-ex="' + exId + '">' +
       '<div class="ex-block-head"><button class="ex-block-name" onclick="openExMenu(\'' + exId + '\')">' + escapeHtml(name) + '</button>' +
       '<button class="ex-menu" onclick="openExMenu(\'' + exId + '\')">•••</button></div>' +
-      '<div class="set-table"><div class="sth"><div class="c-num">Set</div><div>Previous</div><div class="center">lbs</div><div class="center">Reps</div><div class="c-chk">✓</div></div>';
+      '<div class="set-table"><div class="sth" style="grid-template-columns:' + grid + '"><div class="c-num">Set</div><div>Previous</div>' +
+      fields.map(function(f) { return '<div class="center">' + FIELD[f].header + '</div>'; }).join('') +
+      '<div class="c-chk">✓</div></div>';
     sets.forEach(function(s, i) {
       var p = prev[i] || prev[prev.length - 1];
-      var pTxt = p ? (fmtW(p.weight) + ' lb × ' + p.reps) : '—';
       html += '<div class="set-swipe" data-set="' + s.id + '">' +
         '<div class="set-swipe-bg"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>' +
-        '<div class="set-row ' + (s.done ? 'done' : '') + '" data-set="' + s.id + '">' +
+        '<div class="set-row ' + (s.done ? 'done' : '') + '" data-set="' + s.id + '" style="grid-template-columns:' + grid + '">' +
         '<div class="c-num"><span class="set-badge" onclick="askDeleteSet(\'' + s.id + '\')">' + (i + 1) + '</span></div>' +
-        '<div class="c-prev ' + (p ? 'use' : '') + '">' + pTxt + '</div>' +
-        '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="weight" placeholder="' + (p ? fmtW(p.weight) : '0') + '" value="' + (s.weight != null ? fmtW(s.weight) : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'weight\',this.value)">' +
-        '<input class="cell" inputmode="none" data-set="' + s.id + '" data-field="reps" placeholder="' + (p ? p.reps : '0') + '" value="' + (s.reps != null ? s.reps : '') + '" onfocus="openKeypad(this)" onchange="setField(\'' + s.id + '\',\'reps\',this.value)">' +
+        '<div class="c-prev ' + (p ? 'use' : '') + '">' + prevText(p, ex) + '</div>' +
+        fields.map(function(f) { return cellHTML(s, f, p); }).join('') +
         '<button class="chk ' + (s.done ? 'on' : '') + '" onclick="toggleDone(\'' + s.id + '\')"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>' +
         '</div></div>' +
         '<div class="rest-slot" id="restslot-' + s.id + '">' + (s.done ? '' : restLineHTML(s)) + '</div>';
@@ -537,7 +608,8 @@ async function addSetTo(exId, skipRender) {
   var last = existing[existing.length - 1];
   var s = {
     id: genId(), workoutId: active.id, exerciseId: exId, exerciseName: ex ? ex.name : '',
-    weight: last ? last.weight : null, reps: last ? last.reps : null, done: false,
+    weight: last ? last.weight : null, reps: last ? last.reps : null,
+    distance: last ? last.distance : null, duration: last ? last.duration : null, done: false,
     restSec: ex ? ex.defaultRestSec : DEFAULT_REST, seq: nextSeq(), isPR: false, prTypes: []
   };
   await dbPut('sets', s);
@@ -549,22 +621,26 @@ function setLocal(id) { return DATA.sets.filter(function(s) { return s.id === id
 
 async function setField(id, field, val) {
   var s = setLocal(id); if (!s) return;
-  if (field === 'reps') { var r = parseInt(val, 10); s.reps = isNaN(r) ? null : r; }
+  if (FIELD[field] && FIELD[field].int) { var r = parseInt(val, 10); s[field] = isNaN(r) ? null : r; }
   else s[field] = num(val);
   await dbPut('sets', s);
+}
+
+// Fill any blank metric fields of a set from the matching "Previous" set, so
+// checking it off (or finishing the workout) adopts the shown placeholders.
+function fillFromPrev(s) {
+  var ex = exerciseById(s.exerciseId);
+  var prev = previousPerf(s.exerciseId, active.location);
+  var peers = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; });
+  var p = prev[peers.indexOf(s)] || prev[prev.length - 1];
+  if (!p) return;
+  exFields(ex).forEach(function(f) { if (s[f] == null && p[f] != null) s[f] = p[f]; });
 }
 
 async function toggleDone(id) {
   var s = setLocal(id); if (!s) return;
   s.done = !s.done;
-  if (s.done) {
-    // fill blanks from the "Previous" hint if available
-    var prev = previousPerf(s.exerciseId, active.location);
-    var idx = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; }).indexOf(s);
-    var p = prev[idx] || prev[prev.length - 1];
-    if (s.weight == null && p) s.weight = p.weight;
-    if (s.reps == null && p) s.reps = p.reps;
-  }
+  if (s.done) fillFromPrev(s);   // adopt the "Previous" placeholders for blanks
   await dbPut('sets', s);
   renderSession();
   if (s.done && s.restSec) startRest(s); else if (!s.done && sessRest && sessRest.setId === id) stopRest();
@@ -659,7 +735,7 @@ function kpPress(ch) {
   if (!activeCell) return;
   var field = activeCell.getAttribute('data-field');
   var v = activeCell.value || '';
-  if (ch === '.') { if (field === 'reps') return; if (v.indexOf('.') >= 0) return; if (v === '') v = '0'; }
+  if (ch === '.') { if (FIELD[field] && FIELD[field].int) return; if (v.indexOf('.') >= 0) return; if (v === '') v = '0'; }
   if (v.length >= 6) return;
   activeCell.value = v + ch;
   kpCommit();
@@ -673,15 +749,18 @@ function kpNext() {
   if (!activeCell) return;
   var field = activeCell.getAttribute('data-field');
   var setId = activeCell.getAttribute('data-set');
-  var cells = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll .cell'));
+  // Only walk real inputs — the 'duration' time-cell is a div (also class .cell)
+  // that opens its own editor, so it must never receive the numeric keypad.
+  var cells = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll input.cell'));
   var i = cells.indexOf(activeCell);
-  if (field === 'reps') {
-    // Next on reps = check the set (fills blanks + marks done) and start its
-    // rest timer, then jump to the next set's weight. No tapping the green check.
+  var s0 = setLocal(setId), exF = s0 ? exFields(exerciseById(s0.exerciseId)) : [];
+  if (exF[exF.length - 1] === field) {
+    // Next on the type's last field = check the set (fills blanks + marks done)
+    // and start its rest timer, then jump to the next set. No green-check tap.
     var s = setDoneStartRest(setId);
     renderSession();
     if (s && s.restSec) startRest(s);
-    var nc = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll .cell'));
+    var nc = Array.prototype.slice.call(document.querySelectorAll('#sess-scroll input.cell'));
     if (i + 1 < nc.length) openKeypad(nc[i + 1]); else closeKeypad();
     return;
   }
@@ -695,11 +774,7 @@ function setDoneStartRest(setId) {
   var s = setLocal(setId); if (!s) return null;
   if (!s.done) {
     s.done = true;
-    var prev = previousPerf(s.exerciseId, active.location);
-    var idx = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; }).indexOf(s);
-    var p = prev[idx] || prev[prev.length - 1];
-    if (s.weight == null && p) s.weight = p.weight;
-    if (s.reps == null && p) s.reps = p.reps;
+    fillFromPrev(s);
     dbPut('sets', s);
   }
   return s;
@@ -836,16 +911,20 @@ function togglePauseRest() {
   updateRestUI();
 }
 
-// ── Session: rest-duration editor (type any length) ───────────────────────────
-// raw = the digits typed; interpreted right-to-left as M…SS (e.g. "200" → 2:00,
-// "130" → 1:30, "90" → 1:30). kind 'set' edits a set's restSec without starting
-// it; kind 'active' retargets the running timer.
+// ── Session: duration editor (type any length) ────────────────────────────────
+// raw = the digits typed; interpreted right-to-left as [HH]MM SS (e.g. "200" →
+// 2:00, "2830" → 28:30, "10500" → 1:05:00). kind 'set' edits a set's restSec;
+// 'active' retargets the running rest timer; 'setfield' sets a cardio/time set's
+// own logged duration (s.duration).
 var durTarget = null;
 function durTotal() {
   if (!durTarget) return 0;
   if (durTarget.raw === '') return durTarget.initial || 0;
-  var n = parseInt(durTarget.raw, 10) || 0;
-  return Math.floor(n / 100) * 60 + (n % 100);
+  var r = durTarget.raw;
+  var s = parseInt(r.slice(-2), 10) || 0;
+  var m = parseInt(r.slice(-4, -2) || '0', 10) || 0;
+  var h = parseInt(r.slice(0, -4) || '0', 10) || 0;
+  return h * 3600 + m * 60 + s;
 }
 function openDurationEditor(setId) {
   var s = setLocal(setId); if (!s) return;
@@ -857,12 +936,21 @@ function openActiveRestEditor() {
   durTarget = { kind: 'active', initial: sessRest.remaining, raw: '' };
   renderDurEditor(); openModal('dur-modal');
 }
+// The logged time for a Distance & Time / Duration set.
+function openSetTimeEditor(setId) {
+  var s = setLocal(setId); if (!s) return;
+  durTarget = { kind: 'setfield', setId: setId, initial: s.duration || 0, raw: '' };
+  renderDurEditor(); openModal('dur-modal');
+}
 function renderDurEditor() {
   var dig = function(d) { return '<button type="button" onclick="durPress(\'' + d + '\')">' + d + '</button>'; };
+  var isTime = durTarget.kind === 'setfield';
+  var sub = isTime ? 'Time for this set' :
+    (durTarget.kind === 'active' ? 'Adjust the running timer' : 'Rest after this set — won\'t start it');
   $('dur-body').innerHTML =
-    '<div class="sheet-grab"></div><h2>Rest timer</h2>' +
-    '<div class="dur-display">' + fmtClock(durTotal()) + '</div>' +
-    '<p class="dur-sub">' + (durTarget.kind === 'active' ? 'Adjust the running timer' : 'Rest after this set — won\'t start it') + '</p>' +
+    '<div class="sheet-grab"></div><h2>' + (isTime ? 'Duration' : 'Rest timer') + '</h2>' +
+    '<div class="dur-display">' + fmtDur(durTotal()) + '</div>' +
+    '<p class="dur-sub">' + sub + '</p>' +
     '<div class="kp-grid">' +
       dig('1') + dig('2') + dig('3') + dig('4') + dig('5') + dig('6') + dig('7') + dig('8') + dig('9') +
       '<button type="button" onclick="durClear()">C</button>' + dig('0') +
@@ -873,7 +961,7 @@ function renderDurEditor() {
       '<button type="button" class="kp-next" onclick="durApply()">Set</button>' +
     '</div>';
 }
-function durPress(d) { durTarget.raw = (durTarget.raw + d).replace(/^0+/, '').slice(-4); renderDurEditor(); }
+function durPress(d) { durTarget.raw = (durTarget.raw + d).replace(/^0+/, '').slice(-6); renderDurEditor(); }
 function durBackspace() { durTarget.raw = durTarget.raw.slice(0, -1); renderDurEditor(); }
 function durClear() { durTarget.raw = '0'; renderDurEditor(); }
 async function durApply() {
@@ -885,6 +973,9 @@ async function durApply() {
       sessRest.endAt = Date.now() + sessRest.remaining * 1000;
       updateRestUI();
     }
+  } else if (durTarget.kind === 'setfield') {
+    var st = setLocal(durTarget.setId);
+    if (st) { st.duration = total; await dbPut('sets', st); renderSession(); }
   } else {
     var s = setLocal(durTarget.setId);
     if (s) { s.restSec = total; await dbPut('sets', s); renderSession(); }
@@ -905,17 +996,23 @@ function cancelWorkout() {
   }, true);
 }
 
-// The effective weight/reps for an unfinished set: what the user typed, else the
-// grey "Previous" placeholder shown in its row (mirrors renderSession). Lets
-// "Finish all unfinished sets" complete a set left on the placeholder, like Strong.
+// The effective metric values for an unfinished set: what the user typed, else
+// the grey "Previous" placeholder shown in its row (mirrors renderSession). Lets
+// "Finish all unfinished sets" complete a set left on the placeholder, like
+// Strong. Returns an object keyed by the exercise type's fields.
 function setEffective(s) {
-  var w = s.weight, r = s.reps;
-  if (w != null && r != null) return { weight: w, reps: r };
+  var ex = exerciseById(s.exerciseId);
   var peers = workoutSets(active.id).filter(function(x) { return x.exerciseId === s.exerciseId; });
   var prev = previousPerf(s.exerciseId, active.location);
   var p = prev[peers.indexOf(s)] || prev[prev.length - 1];
-  return { weight: w != null ? w : (p ? p.weight : null),
-           reps:   r != null ? r : (p ? p.reps   : null) };
+  var out = {};
+  exFields(ex).forEach(function(f) { out[f] = s[f] != null ? s[f] : (p ? p[f] : null); });
+  return out;
+}
+// True when every metric field the exercise needs has a value (typed or default).
+function effComplete(s) {
+  var e = setEffective(s);
+  return exFields(exerciseById(s.exerciseId)).every(function(f) { return e[f] != null; });
 }
 
 function confirmFinish() {
@@ -923,9 +1020,7 @@ function confirmFinish() {
   var ss = workoutSets(active.id);
   var doneCt = ss.filter(function(s) { return s.done; }).length;
   var unchecked = ss.filter(function(s) { return !s.done; });
-  var completable = unchecked.filter(function(s) {
-    var e = setEffective(s); return e.weight != null && e.reps != null;
-  });
+  var completable = unchecked.filter(effComplete);
   // Nothing completed and nothing completable → offer to discard the empty workout.
   if (!doneCt && !completable.length) {
     showConfirm('Finish empty workout?', 'No sets were completed — this will be discarded.', 'Discard', function() { cancelWorkout(); });
@@ -957,8 +1052,10 @@ async function finishWorkout(completeUnfinished) {
     var s = ss[i];
     if (s.done) continue;
     var e = completeUnfinished ? eff[s.id] : null;
-    if (e && e.weight != null && e.reps != null) {
-      s.weight = e.weight; s.reps = e.reps; s.done = true;
+    var ok = e && exFields(exerciseById(s.exerciseId)).every(function(f) { return e[f] != null; });
+    if (ok) {
+      exFields(exerciseById(s.exerciseId)).forEach(function(f) { s[f] = e[f]; });
+      s.done = true;
       await dbPut('sets', s);
     } else {
       await dbDelete('sets', s.id);
@@ -1005,19 +1102,36 @@ async function computePRs(workout) {
       return w && w.finishedAt && w.id !== workout.id && w.location === workout.location &&
              new Date(w.finishedAt) < new Date(workout.finishedAt);
     });
-    var bestW = 0, bestV = 0, best1 = 0;
+    var t = exType(exerciseById(exId));
+    // Prior bests across every metric; each type reads the ones it cares about.
+    var bestW = 0, bestV = 0, best1 = 0, bestR = 0, bestD = 0, bestT = 0;
     prior.forEach(function(s) {
       bestW = Math.max(bestW, s.weight || 0);
       bestV = Math.max(bestV, (s.weight || 0) * (s.reps || 0));
       best1 = Math.max(best1, epley(s.weight, s.reps));
+      bestR = Math.max(bestR, s.reps || 0);
+      bestD = Math.max(bestD, s.distance || 0);
+      bestT = Math.max(bestT, s.duration || 0);
     });
     var cur = workoutSets(workout.id).filter(function(s) { return s.exerciseId === exId && s.done; });
     for (var i = 0; i < cur.length; i++) {
       var s = cur[i], types = [];
-      var w = s.weight || 0, v = w * (s.reps || 0), e = epley(s.weight, s.reps);
-      if (w > bestW) { types.push('WEIGHT'); bestW = w; }
-      if (v > bestV) { types.push('VOL'); bestV = v; }
-      if (e > best1) { types.push('1RM'); best1 = e; }
+      if (t === 'weight_reps') {
+        var w = s.weight || 0, v = w * (s.reps || 0), e = epley(s.weight, s.reps);
+        if (w > bestW) { types.push('WEIGHT'); bestW = w; }
+        if (v > bestV) { types.push('VOL'); bestV = v; }
+        if (e > best1) { types.push('1RM'); best1 = e; }
+      } else if (t === 'bodyweight') {
+        var r = s.reps || 0;
+        if (r > bestR) { types.push('REPS'); bestR = r; }
+      } else if (t === 'distance_time') {
+        var d = s.distance || 0, tt = s.duration || 0;
+        if (d > bestD) { types.push('DIST'); bestD = d; }
+        if (tt > bestT) { types.push('TIME'); bestT = tt; }
+      } else if (t === 'time') {
+        var tm = s.duration || 0;
+        if (tm > bestT) { types.push('TIME'); bestT = tm; }
+      }
       s.prTypes = types; s.isPR = types.length > 0;
       await dbPut('sets', s);
     }
@@ -1052,15 +1166,19 @@ function renderHistory() {
     if (mk !== curMonth) { curMonth = mk; html += '<div class="hist-month">' + mk + '</div>'; }
     var sets = workoutSets(w.id).filter(function(s) { return s.done; });
     var vol = sets.reduce(function(a, s) { return a + (s.weight || 0) * (s.reps || 0); }, 0);
+    var dist = sets.reduce(function(a, s) { return a + (s.distance || 0); }, 0);
     var prs = sets.reduce(function(a, s) { return a + (s.prTypes ? s.prTypes.length : 0); }, 0);
     var dur = w.finishedAt ? fmtDuration(new Date(w.finishedAt) - new Date(w.startedAt)) : '—';
-    // best set per exercise
+    // best set per exercise, ranked by that exercise's type metric
     var byEx = {};
-    sets.forEach(function(s) { if (!byEx[s.exerciseId] || s.weight > byEx[s.exerciseId].weight) byEx[s.exerciseId] = s; });
+    sets.forEach(function(s) {
+      var t = exType(exerciseById(s.exerciseId));
+      if (!byEx[s.exerciseId] || bestMetric(s, t) > bestMetric(byEx[s.exerciseId], t)) byEx[s.exerciseId] = s;
+    });
     var rows = w.exerciseOrder.filter(function(e) { return byEx[e]; }).map(function(exId) {
       var s = byEx[exId], cnt = sets.filter(function(x) { return x.exerciseId === exId; }).length;
       return '<div class="hcs-row"><span class="l">' + cnt + ' × ' + escapeHtml(s.exerciseName || (exerciseById(exId) || {}).name || 'Exercise') + '</span>' +
-        '<span class="r">' + fmtW(s.weight) + ' lb × ' + s.reps + '</span></div>';
+        '<span class="r">' + escapeHtml(setSummary(s, exerciseById(exId))) + '</span></div>';
     }).join('');
     html += '<div class="card hist-card">' +
       '<div class="row-between"><div><div class="hc-title">' + escapeHtml(w.label || 'Workout') + '</div>' +
@@ -1068,7 +1186,8 @@ function renderHistory() {
       '<button class="ex-menu" style="background:var(--card-2);color:var(--accent);border-radius:8px;width:36px;height:30px;border:0;" onclick="openHistMenu(\'' + w.id + '\')">•••</button></div>' +
       '<div class="hc-stats">' +
         '<span><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>' + dur + '</span>' +
-        '<span><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' + Math.round(vol).toLocaleString() + ' lb</span>' +
+        (vol ? '<span><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' + Math.round(vol).toLocaleString() + ' lb</span>' : '') +
+        (dist ? '<span><svg viewBox="0 0 24 24"><path d="M3 12h18M12 3v18"/></svg>' + fmtW(Math.round(dist * 100) / 100) + ' mi</span>' : '') +
         (prs ? '<span class="pr-ct">🏆 ' + prs + ' PR' + (prs > 1 ? 's' : '') + '</span>' : '') +
       '</div>' +
       '<div class="hc-sets"><div class="hcs-head"><span>Exercise</span><span>Best Set</span></div>' + rows + '</div>' +
@@ -1082,21 +1201,27 @@ function openWorkoutDetail(wid) {
   var w = DATA.workouts.filter(function(x) { return x.id === wid; })[0]; if (!w) return;
   var sets = workoutSets(wid).filter(function(s) { return s.done; });
   var vol = sets.reduce(function(a, s) { return a + (s.weight || 0) * (s.reps || 0); }, 0);
+  var dist = sets.reduce(function(a, s) { return a + (s.distance || 0); }, 0);
   var prs = sets.reduce(function(a, s) { return a + (s.prTypes ? s.prTypes.length : 0); }, 0);
   var dur = fmtDuration(new Date(w.finishedAt) - new Date(w.startedAt));
   var body = '<div class="sheet-grab"></div><h2>' + escapeHtml(w.label || 'Workout') + '</h2>' +
     '<p class="sub">' + fmtDateLong(w.finishedAt) + (w.location ? ' · ' + escapeHtml(w.location) : '') + '</p>' +
-    '<div class="hc-stats" style="margin-top:0;"><span>⏱ ' + dur + '</span><span>🏋 ' + Math.round(vol).toLocaleString() + ' lb</span>' + (prs ? '<span class="pr-ct">🏆 ' + prs + '</span>' : '') + '</div>';
+    '<div class="hc-stats" style="margin-top:0;"><span>⏱ ' + dur + '</span>' +
+      (vol ? '<span>🏋 ' + Math.round(vol).toLocaleString() + ' lb</span>' : '') +
+      (dist ? '<span>📏 ' + fmtW(Math.round(dist * 100) / 100) + ' mi</span>' : '') +
+      (prs ? '<span class="pr-ct">🏆 ' + prs + '</span>' : '') + '</div>';
   w.exerciseOrder.forEach(function(exId) {
     var ss = sets.filter(function(s) { return s.exerciseId === exId; });
     if (!ss.length) return;
-    var best1 = Math.max.apply(null, ss.map(function(s) { return epley(s.weight, s.reps); }));
-    body += '<div class="detail-ex"><div class="de-head"><span>' + escapeHtml(ss[0].exerciseName || (exerciseById(exId) || {}).name || 'Exercise') + '</span><span class="de-1rm">1RM ' + best1 + '</span></div>';
+    var ex = exerciseById(exId), isWR = exType(ex) === 'weight_reps';
+    var best1 = isWR ? Math.max.apply(null, ss.map(function(s) { return epley(s.weight, s.reps); })) : 0;
+    body += '<div class="detail-ex"><div class="de-head"><span>' + escapeHtml(ss[0].exerciseName || (ex || {}).name || 'Exercise') + '</span>' +
+      (isWR ? '<span class="de-1rm">1RM ' + best1 + '</span>' : '') + '</div>';
     ss.forEach(function(s, i) {
       body += '<div class="detail-set"><span class="ds-n">' + (i + 1) + '</span>' +
-        '<span>' + fmtW(s.weight) + ' lb × ' + s.reps +
+        '<span>' + escapeHtml(setSummary(s, ex)) +
         (s.prTypes && s.prTypes.length ? ' <span class="pr-badges">' + s.prTypes.map(function(t) { return '<span class="pr-badge">🏆 ' + t + '</span>'; }).join('') + '</span>' : '') +
-        '</span><span class="ds-1rm">' + epley(s.weight, s.reps) + '</span></div>';
+        '</span><span class="ds-1rm">' + (isWR ? epley(s.weight, s.reps) : '') + '</span></div>';
     });
     body += '</div>';
   });
@@ -1143,7 +1268,8 @@ async function performAgain(wid) {
   for (var i = 0; i < src.length; i++) {
     var o = src[i];
     var ns = { id: genId(), workoutId: active.id, exerciseId: o.exerciseId, exerciseName: o.exerciseName,
-      weight: o.weight, reps: o.reps, done: false, restSec: o.restSec || DEFAULT_REST, seq: nextSeq(), isPR: false, prTypes: [] };
+      weight: o.weight, reps: o.reps, distance: o.distance, duration: o.duration, done: false,
+      restSec: o.restSec || DEFAULT_REST, seq: nextSeq(), isPR: false, prTypes: [] };
     await dbPut('sets', ns); DATA.sets.push(ns);
   }
   renderSession();

@@ -1,18 +1,18 @@
 'use strict';
 
-var CACHE = 'liftlog-v10';
+var CACHE = 'liftlog-v11';
 // Precache URLs must match how index.html requests them (incl. ?v=) — cache
 // matching is exact-URL, so unversioned entries would never be hit.
 var ASSETS = [
   '/liftlog/',
   '/liftlog/index.html',
-  '/liftlog/styles.css?v=10',
-  '/liftlog/db.js?v=10',
-  '/liftlog/app.js?v=10',
-  '/liftlog/sync.js?v=10',
-  '/liftlog/auth.js?v=10',
-  '/liftlog/manifest.json?v=10',
-  '/liftlog/icon.svg?v=10'
+  '/liftlog/styles.css?v=11',
+  '/liftlog/db.js?v=11',
+  '/liftlog/app.js?v=11',
+  '/liftlog/sync.js?v=11',
+  '/liftlog/auth.js?v=11',
+  '/liftlog/manifest.json?v=11',
+  '/liftlog/icon.svg?v=11'
 ];
 
 self.addEventListener('install', function(e) {
